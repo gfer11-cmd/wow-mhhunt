@@ -6441,24 +6441,34 @@ do
         rang = rang + 1
     end
 end
--- Touffes d'herbe : brins fins en 2-3 px, plusieurs verts, denses
+-- Touffes d'herbe : brins fins en 2-3 px, plusieurs verts, denses.
+-- Générateur déterministe maison (mulberry-like) : math.randomseed
+-- n'existe pas sur ce client, et une disposition stable est voulue —
+-- l'herbe ne doit pas « sauter » d'une ouverture à l'autre.
 do
-    math.randomseed(42) -- disposition stable à chaque ouverture
+    local graine = 42
+    local function bruit()
+        graine = (graine * 1103515245 + 12345) % 2147483648
+        return graine / 2147483648
+    end
+    local function bruitEntier(min, max)
+        return min + math.floor(bruit() * (max - min + 1))
+    end
     for i = 1, 70 do
         local g = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-        local x = math.random(0, 529)
-        local y = math.random(2, MHH_SOL_H - 8)
-        local vert = 0.50 + math.random() * 0.20
-        g:SetSize(2, math.random(4, 7))
+        local x = bruitEntier(0, 529)
+        local y = bruitEntier(2, MHH_SOL_H - 8)
+        local vert = 0.50 + bruit() * 0.20
+        g:SetSize(2, bruitEntier(4, 7))
         g:SetColorTexture(vert * 0.80, vert, vert * 0.50, 1)
         g:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, y)
     end
-    -- Fleurs : 5 points de couleur (coquelicot/blé) posés sur l'herbe
+    -- Fleurs : points de couleur (coquelicot/bouton d'or) posés sur l'herbe
     for i = 1, 6 do
         local f = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
         f:SetSize(3, 3)
-        f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", math.random(6, 522), math.random(6, MHH_SOL_H - 10))
-        if math.random(2) == 1 then
+        f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", bruitEntier(6, 522), bruitEntier(6, MHH_SOL_H - 10))
+        if bruitEntier(1, 2) == 1 then
             f:SetColorTexture(0.95, 0.35, 0.30, 1)  -- coquelicot
         else
             f:SetColorTexture(0.98, 0.90, 0.45, 1)  -- bouton d'or
@@ -6467,8 +6477,8 @@ do
     -- Cailloux gris posés ça et là
     for i = 1, 4 do
         local c = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-        c:SetSize(math.random(4, 6), math.random(2, 4))
-        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", math.random(8, 520), math.random(2, MHH_SOL_H - 6))
+        c:SetSize(bruitEntier(4, 6), bruitEntier(2, 4))
+        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", bruitEntier(8, 520), bruitEntier(2, MHH_SOL_H - 6))
         c:SetColorTexture(0.55, 0.52, 0.47, 1)
     end
     -- Chemin de terre clair qui traverse au tiers du sol
