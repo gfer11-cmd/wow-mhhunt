@@ -7168,13 +7168,32 @@ local function PeutDeclencherIntrus()
     return math.random(100) <= 20
 end
 local function DeclencherIntrus()
-    -- un rare du catalogue, de préférence de la zone d'un pensionnaire
-    local candidats = {}
+    -- L'INTRUS : un gibier du CARNET DE CHASSE (rares Forever du data file —
+    -- jamais un boss de raid ni un PNJ hors carnet). Préférence : une bête de
+    -- la zone d'un pensionnaire de l'enclos affiché (cohérence), sinon
+    -- n'importe quel rare catalogué.
+    local biome = DB.enclosActif or "savane"
+    local zonesResidents = {}
+    for _, enc in ipairs(MHH_ENCLOS) do
+        if enc.cle == biome then
+            for _, nom in ipairs(enc.specimens) do
+                local z = MHH_CATALOGUE[nom]
+                if z then zonesResidents[z] = true end
+            end
+        end
+    end
+    local candidats, candidatsZone = {}, {}
     for nomC in pairs(MHH_CATALOGUE) do
-        if MHH_EstNomAffichable(nomC) then candidats[#candidats + 1] = nomC end
+        if MHH_EstNomAffichable(nomC) then
+            candidats[#candidats + 1] = nomC
+            if zonesResidents[MHH_CATALOGUE[nomC]] then
+                candidatsZone[#candidatsZone + 1] = nomC
+            end
+        end
     end
     if #candidats == 0 then return end
-    local intrusNom = candidats[math.random(#candidats)]
+    local liste = (#candidatsZone > 0) and candidatsZone or candidats
+    local intrusNom = liste[math.random(#liste)]
     MHH_intrus.nom = intrusNom
     MHH_intrus.jusqua = GetTime() + 12
     DB.intrusCooldown = time() + 3600
