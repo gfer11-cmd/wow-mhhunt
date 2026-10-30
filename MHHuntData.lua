@@ -103,7 +103,7 @@ MHHuntData = {
     { nomEn = "Stonearm", nom = "Bras-de-pierre", vu = true, zone = "Les Tarides", zoneEn = "The Barrens", niveau = 15, elite = false },
     { nomEn = "Brokespear", nom = "Brokespear", zone = "Les Tarides", zoneEn = "The Barrens", niveau = 17, elite = false },
     { nomEn = "Snort the Heckler", nom = "Snort le Moqueur", vu = true, zone = "Les Tarides", zoneEn = "The Barrens", niveau = 17, elite = false },
-    { nomEn = "Rocklance", nom = "Lance-de-roche", alias = { "Rochelance" }, vu = true, zone = "Les Tarides", zoneEn = "The Barrens", niveau = 17, elite = true },
+    { nomEn = "Rocklance", nom = "Lance-de-roche", alias = { "Rochelance" }, id = 5841, vu = true, zone = "Les Tarides", zoneEn = "The Barrens", niveau = 17, elite = true, x = 55.0, y = 42.0 },
     { nomEn = "Engineer Whirleygig", nom = "Ingénieur Tourniquet", zone = "Les Tarides", zoneEn = "The Barrens", niveau = 19, elite = false },
     { nomEn = "Foreman Grills", nom = "Contremaître Grills", zone = "Les Tarides", zoneEn = "The Barrens", niveau = 19, elite = false },
     { nomEn = "Sludge Beast", nom = "Bête de boue", zone = "Les Tarides", zoneEn = "The Barrens", niveau = 19, elite = false },

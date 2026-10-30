@@ -2087,6 +2087,44 @@ local function sousClasseDe(ref)
     return sous
 end
 
+-- TYPES D'ARMES canoniques (client FR) : l'histogramme affiche TOUS ces
+-- types, même à 0 — un chasseur voit d'un coup d'œil ses armes de prédilection
+-- et celles qu'il n'a jamais utilisées.
+MHH_TYPES_ARMES = {
+    "Dagues", "Epées", "Epées à deux mains", "Masses", "Masses à deux mains",
+    "Haches", "Haches à deux mains", "Armes de pugilat", "Armes d'hast",
+    "Arcs", "Arbalètes", "Bâtons", "Baguettes", "Armes à feu",
+}
+-- Normalisation : le client FR écrit parfois « Epées » ou « Épées » (accent),
+-- et le tooltip peut coller la classe de l'arme en majuscules.
+local function NormaliserTypeArme(t)
+    if not t then return nil end
+    t = tostring(t)
+    -- minuscules + sans accent brutal (le FR du serveur varie)
+    local bas = string.lower(t)
+    for _, canon in ipairs(MHH_TYPES_ARMES) do
+        local canonBas = string.lower(canon)
+        if bas == canonBas then return canon end
+        -- correspondance partielle (ex. « haches » dans « haches à deux mains »)
+        if string.find(bas, canonBas, 1, true) and #bas <= #canonBas + 2 then
+            return canon
+        end
+    end
+    -- graphies FR alternatives courantes
+    local ALT = {
+        ["épées"] = "Epées", ["epees"] = "Epées", ["épée"] = "Epées",
+        ["épées à deux mains"] = "Epées à deux mains",
+        ["dague"] = "Dagues", ["hache"] = "Haches",
+        ["haches à deux mains"] = "Haches à deux mains",
+        ["masse"] = "Masses", ["bâton"] = "Bâtons", ["baton"] = "Bâtons",
+        ["arc"] = "Arcs", ["baguette"] = "Baguettes",
+        ["armes de pugilat"] = "Armes de pugilat",
+        ["armes d'hast"] = "Armes d'hast",
+        ["armes à feu"] = "Armes à feu", ["arbalète"] = "Arbalètes",
+    }
+    return ALT[bas] or t
+end
+
 local function FinChasseVictoire(nom)
     -- Anti double-validation : la bête ne se prend qu'une fois (le journal
     -- de combat, le ticker chrono et UnitIsDead peuvent tous la signaler)
@@ -2219,8 +2257,8 @@ local function FinChasseVictoire(nom)
         pcall(function()
             -- Lien d'abord, id en repli — sousClasseDe corrige l'indice
             -- (8e valeur ; via pcall la capture n = valeur n-1).
-            sousClasseArme = sousClasseDe(GetInventoryItemLink and GetInventoryItemLink("player", 16))
-                or sousClasseDe(GetInventoryItemID and GetInventoryItemID("player", 16))
+            sousClasseArme = NormaliserTypeArme(sousClasseDe(GetInventoryItemLink and GetInventoryItemLink("player", 16)))
+                or NormaliserTypeArme(sousClasseDe(GetInventoryItemID and GetInventoryItemID("player", 16)))
             -- Source 2 : le TOOLTIP de l'objet en main droite. Sur ce
             -- client le cache d'objet renvoyé par GetItemInfo est souvent
             -- VIDE (nil sur lien ET id), alors que le tooltip, lui, rend
@@ -2228,12 +2266,27 @@ local function FinChasseVictoire(nom)
             -- sous-classe (« Haches », « Épées »… en client FR) — c'est
             -- la valeur exacte que l'histogramme veut compter.
             if not sousClasseArme and GameTooltip then
+                -- Scan de TOUTES les lignes du tooltip : la ligne du type
+                -- d'arme (« Haches », « Dagues »…) n'est pas toujours la 2e
+                -- (le « Niveau d'objet » s'y glisse selon les clients) et
+                -- « Niveau d'objet » n'est PAS un type. On cherche la
+                -- première ligne qui matche un type canonique.
                 GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
                 GameTooltip:ClearLines()
                 GameTooltip:SetInventoryItem("player", 16)
-                local libelle = GameTooltipTextLeft2 and GameTooltipTextLeft2:GetText()
+                for lig = 1, math.min(GameTooltip:NumLines(), 8) do
+                    local fs = _G["GameTooltipTextLeft" .. lig]
+                    local txt = fs and fs.GetText and fs:GetText()
+                    if txt and txt ~= "" and not string.find(string.lower(txt), "niveau d", 1, true) then
+                        local norm = NormaliserTypeArme(txt)
+                        -- garder seulement si reconnu canonique
+                        for _, canon in ipairs(MHH_TYPES_ARMES) do
+                            if norm == canon then sousClasseArme = canon break end
+                        end
+                        if sousClasseArme then break end
+                    end
+                end
                 GameTooltip:Hide()
-                if libelle and libelle ~= "" then sousClasseArme = libelle end
             end
         end)
         DB.armes = DB.armes or {}
@@ -3198,6 +3251,21 @@ local function OnEvenementPrincipal(self, event, ...)
                 DebugChasse("finCombat", nomChasse .. L(" — fuite annoncée dans 3,5 s si aucune prise"))
                 C_Timer.After(3.5, function()
                     if chasseActive ~= nomChasse then return end
+                    -- DERNIER FILET avant le verdict de fuite : la bête a pu
+                    -- mourir APRÈS la perte de ciblage (DoT) et UNIT_DIED
+                    -- peut manquer. On redemande au viseur ET au survol.
+                    local encoreMorte = false
+                    pcall(function()
+                        if UnitExists("target") and (UnitName("target") or "") == nomChasse
+                            and UnitIsDead("target") then encoreMorte = true end
+                        if UnitExists("mouseover") and (UnitName("mouseover") or "") == nomChasse
+                            and UnitIsDead("mouseover") then encoreMorte = true end
+                    end)
+                    if encoreMorte then
+                        DebugChasse("finCombat", nomChasse .. L(" — cadavre repéré au dernier filet : prise !"))
+                        FinChasseVictoire(nomChasse)
+                        return
+                    end
                     DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffa58b54Le monstre vous a échappé…|r La chasse de ") .. nomChasse .. L(" est suspendue."))
                     chasseSuspendue = {
                         nom = nomChasse,
@@ -3210,6 +3278,7 @@ local function OnEvenementPrincipal(self, event, ...)
                         quand = time(),
                     }
                     chasseActive = nil
+                    if MHH_ArreterMusique then MHH_ArreterMusique() end
                     MettreAJourIndicateur()
                 end)
             end
@@ -5680,8 +5749,8 @@ MHH_armesBtn:SetScript("OnEnter", function(self)
 end)
 MHH_armesBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 MHH_armesPan = CreateFrame("Frame", nil, pageProfil, MHH_TEMPLATE_BACKDROP)
-MHH_armesPan:SetPoint("TOPLEFT", MHH_armesBtn, "BOTTOMLEFT", -2, -8)
-MHH_armesPan:SetSize(216, 168)
+MHH_armesPan:SetPoint("TOPLEFT", MHH_armesBtn, "BOTTOMLEFT", -10, -8)
+MHH_armesPan:SetSize(232, 168)
 MHH_armesPan:Hide()
 MHH_armesPan:SetFrameStrata("HIGH")
 -- L'histogramme suit la fenêtre et l'onglet : jamais d'encart orphelin
@@ -5706,28 +5775,30 @@ MHH_armesVide:SetText(L("|cffa58b54Aucune prise mesurée encore — l'arme de vo
 MHH_armesVide:SetWidth(196)
 MHH_armesVide:Hide()
 MHH_armesBarres = {}
--- HISTOGRAMME VERTICAL : barres de BAS en HAUT (façon camembert MH), une
--- colonne par TYPE d'arme, hauteur proportionnelle aux prises. Le libellé
--- du type est SOUS l'axe (vertical s'il est long), le compte au-dessus de
--- la barre. Tout tient dans le cadre 216x168.
+-- HISTOGRAMME VERTICAL FIXE : une colonne par TYPE D'ARME canonique (les 14
+-- possibles), même à 0 — le chasseur voit sa prédilection d'un coup d'œil.
+-- Barres de bas en haut, type en vertical SOUS l'axe, compte au-dessus.
 function MHH_RaffraichirArmesHistogramme()
     if not DB then return end
-    local entrees = {}
+    -- compte par type canonique (les graphies inconnues sont ignorées)
+    local comptes = {}
+    for _, canon in ipairs(MHH_TYPES_ARMES) do comptes[canon] = 0 end
     if DB.armes then
         for arme, n in pairs(DB.armes) do
-            entrees[#entrees + 1] = { arme, n }
+            local canon = NormaliserTypeArme(arme)
+            if comptes[canon] then comptes[canon] = comptes[canon] + n end
         end
-        table.sort(entrees, function(a, b) return a[2] > b[2] end)
     end
-    local maxN = (entrees[1] and entrees[1][2]) or 1
-    MHH_armesVide:SetShown(#entrees == 0)
-    -- 7 colonnes max, largeur adaptée au nombre présent
-    local nb = math.min(#entrees, 7)
-    local margeG, margeD = 10, 10
-    local zoneW = 216 - margeG - margeD       -- 196 utiles
-    local axeY = 128                           -- ligne de sol (bas du panneau)
-    local hMax = 88                           -- hauteur max des barres
-    for i = 1, 7 do
+    local total = 0
+    for _, n in pairs(comptes) do total = total + n end
+    MHH_armesVide:SetShown(total == 0)
+    local nb = #MHH_TYPES_ARMES
+    local margeG, margeD = 8, 8
+    local zoneW = 232 - margeG - margeD       -- 216 utiles
+    local axeY = 122                          -- ligne de sol (depuis le HAUT)
+    local hMax = 76                           -- hauteur max des barres
+    local colW = math.floor(zoneW / nb)       -- ~15px par colonne
+    for i, canon in ipairs(MHH_TYPES_ARMES) do
         local barre = MHH_armesBarres[i]
         if not barre then
             barre = {}
@@ -5736,38 +5807,33 @@ function MHH_RaffraichirArmesHistogramme()
             barre.fill = MHH_armesPan:CreateTexture(nil, "ARTWORK")
             barre.fill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            barre.txt:SetJustifyH("CENTER")
             barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            barre.count:SetJustifyH("CENTER")
+            pcall(function() barre.txt:SetRotation(math.rad(-90)) end)
             MHH_armesBarres[i] = barre
         end
-        local e = entrees[i]
-        if e then
-            local colW = (nb > 0) and math.floor(zoneW / nb) - 4 or 0
-            local x = margeG + (i - 1) * (colW + 4)
-            local h = math.max(4, math.floor(hMax * e[2] / maxN))
-            barre.fond:Show() barre.fill:Show() barre.txt:Show() barre.count:Show()
-            -- piste de fond sur toute la hauteur (repère visuel)
-            barre.fond:SetSize(colW, hMax)
-            barre.fond:SetPoint("BOTTOMLEFT", MHH_armesPan, "BOTTOMLEFT", x, 168 - axeY)
-            -- remplissage : de bas en haut
-            barre.fill:SetSize(colW, h)
-            barre.fill:SetPoint("BOTTOMLEFT", MHH_armesPan, "BOTTOMLEFT", x, 168 - axeY)
-            -- type d'arme : vertical (rotation) sous l'axe — lisible et compact
-            barre.txt:ClearAllPoints()
-            barre.txt:SetPoint("TOPLEFT", MHH_armesPan, "BOTTOMLEFT", x + colW - 4, 168 - axeY + 16)
-            pcall(function() barre.txt:SetRotation(math.rad(-90)) end)
-            barre.txt:SetWidth(64)
-            barre.txt:SetText("|cffd8c9a3" .. e[1] .. "|r")
-            -- compte au-dessus de la barre
-            barre.count:ClearAllPoints()
-            barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + colW / 2, 168 - axeY + h + 2)
-            barre.count:SetText("|cffffd100" .. e[2] .. "|r")
-        else
-            barre.fond:Hide() barre.fill:Hide() barre.txt:Hide() barre.count:Hide()
+        local n = comptes[canon]
+        local x = margeG + (i - 1) * colW
+        local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
+        -- piste de fond pleine hauteur (repère), remplissage si > 0
+        barre.fond:SetSize(colW - 3, hMax)
+        barre.fond:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, 168 - axeY - hMax)
+        barre.fill:SetShown(n > 0)
+        if n > 0 then
+            barre.fill:SetSize(colW - 3, h)
+            barre.fill:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, 168 - axeY - h)
         end
+        -- type d'arme en vertical sous l'axe
+        barre.txt:ClearAllPoints()
+        barre.txt:SetPoint("TOPRIGHT", MHH_armesPan, "TOPLEFT", x + colW - 2, 168 - axeY + 2)
+        barre.txt:SetWidth(40)
+        barre.txt:SetText("|cffd8c9a3" .. canon .. "|r")
+        -- compte au-dessus de la barre (ou sur l'axe si 0)
+        barre.count:ClearAllPoints()
+        barre.count:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + colW / 2, 168 - axeY - h - 2)
+        barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff5555550|r")
     end
 end
+
 MHH_armesBtn:SetScript("OnClick", function()
     if MHH_armesPan:IsShown() then
         MHH_armesPan:Hide()
