@@ -5849,8 +5849,9 @@ function MHH_RaffraichirArmesHistogramme()
     MHH_armesVide:SetShown(total == 0)
     local nbTypes = #types
     -- géométrie (panneau 280x158, tout ancré depuis le BAS)
-    local margeCote = 6
-    local colW = math.floor((280 - margeCote * 2) / nbTypes)
+    -- colonnes réparties régulièrement sur TOUTE la largeur (pas de
+    -- décalage à gauche : centres à marge + (i-0.5)*pas exact)
+    local pas = 280 / nbTypes
     local hMax = 30                       -- barres PLUS PETITES
     -- l'axe est HAUT : sous lui, la place des libellés verticaux (la plus
     -- longue étiquette « Haches 2M » = 8 lettres x 9px = 72px de descente)
@@ -5864,14 +5865,14 @@ function MHH_RaffraichirArmesHistogramme()
             barre.fill = MHH_armesPan:CreateTexture(nil, "ARTWORK")
             barre.fill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            barre.txt:SetJustifyH("LEFT")
+            barre.txt:SetJustifyH("CENTER")
             barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             barre.count:SetJustifyH("CENTER")
             MHH_armesBarres[i] = barre
         end
         local n = comptes[canon]
-        local x = margeCote + (i - 1) * colW
-        local cx = x + colW / 2
+        local cx = pas * (i - 0.5)
+        local colW = pas
         -- PISTE : repère sous le compte, de l'axe à axe+hMax
         barre.fond:SetSize(colW - 8, hMax)
         barre.fond:ClearAllPoints()
@@ -5904,7 +5905,7 @@ function MHH_RaffraichirArmesHistogramme()
         barre.txt:ClearAllPoints()
         -- séparé de l'axe par 4 px : le texte ne colle plus à la colonne
         barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx, axe - 5)
-        barre.txt:SetWidth(colW + 2)
+        barre.txt:SetWidth(colW + 4)
         barre.txt:SetJustifyH("CENTER")
         barre.txt:SetText("|cffd8c9a3" .. table.concat(lignes, "\n") .. "|r")
     end
