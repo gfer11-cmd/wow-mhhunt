@@ -6324,37 +6324,28 @@ MHH_menagerieTitre:SetText(L("|cffffd100MÉNAGERIE|r"))
 -- (Pas de sous-titre ici : le mode d'emploi de la capture est dans le
 -- tuto — ici, on laisse toute la place à l'enclos)
 
--- L'enclos proprement dit : ciel + sol
+-- L'enclos proprement dit : décor peint (TGA) au-dessus d'un repli procedural
 MHH_enclosMenagerie = CreateFrame("Frame", nil, MHH_menagerieFond)
 MHH_enclosMenagerie:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 10, -32)
 MHH_enclosMenagerie:SetSize(532, 166)
-MHH_enclosCiel = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosCiel:SetAllPoints()
--- FOND PEINT : la scène complète (ciel, nuages, soleil, collines, arbre,
--- herbe texturée, chemin, clôture, grange) est une SEULE image TGA,
--- générée en pixel art façon Stardew — cf Textures/enclos.tga. Le repli
--- procedural (bandes de ciel + damier) reste dessous si le fichier manque.
+-- FOND PEINT : la scène complète (ciel, collines, herbe texturée, clôture,
+-- grange) est une SEULE image TGA par faction — cf Textures/enclos_*.tga.
 MHH_enclosFondImg = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
 MHH_enclosFondImg:SetAllPoints(MHH_enclosMenagerie)
 -- Décor selon la FACTION du chasseur : ranch horde (savane rouge/brune)
 -- ou alliance (prairie verte/blue) — repli sur le décor neutre.
-local cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos.tga"
-pcall(function()
-    local faction = UnitFactionGroup and UnitFactionGroup("player")
-    if faction == "Horde" or faction == "Alliance" then
-        cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos_" ..
-            (faction == "Horde" and "horde" or "alliance") .. ".tga"
-    end
-end)
-local enclosTgaOk = MHH_enclosFondImg:SetTexture(cheminEnclos)
-if not enclosTgaOk then
-    -- décor de faction absent : essai du décor neutre
-    enclosTgaOk = MHH_enclosFondImg:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\enclos.tga")
-end
-if not enclosTgaOk then MHH_enclosFondImg:Hide() end
--- Dégradé de ciel procédural (REPLI si le TGA est absent)
+-- NB : sur client Vanilla, SetTexture ne renvoie RIEN (pas de booléen de
+-- succès — c'est une API moderne). On ne peut PAS tester le chargement.
+-- Stratégie robuste : l'image peinte est dessinée EN DESSUS des textures
+-- procédurales (créée après elles dans la même couche = au-dessus). Si le
+-- fichier TGA existe il la recouvre entièrement ; s'il manque, la texture
+-- reste transparente et le repli procedural reste visible dessous.
+MHH_enclosCiel = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
+MHH_enclosCiel:SetAllPoints()
+MHH_enclosCiel:SetColorTexture(0.47, 0.66, 0.92, 0.98)
 MHH_enclosBandesCiel = {}
-if not enclosTgaOk then
+do
+    -- Dégradé de ciel procédural (REPLI visible sous le TGA s'il manque)
     local HAUT = 166
     local NB = 8
     for b = 1, NB do
@@ -6366,6 +6357,23 @@ if not enclosTgaOk then
         MHH_enclosBandesCiel[#MHH_enclosBandesCiel + 1] = bande
     end
 end
+MHH_enclosSol = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
+MHH_enclosSol:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 0)
+MHH_enclosSol:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", 0, 0)
+MHH_enclosSol:SetHeight(92)
+MHH_enclosSol:SetColorTexture(0.42, 0.60, 0.30, 1)
+-- L'IMAGE PEINTE : dessinée après = AU-DESSUS du repli. Le TGA opaque
+-- la recouvre entièrement quand il est présent.
+local cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos.tga"
+pcall(function()
+    local faction = UnitFactionGroup and UnitFactionGroup("player")
+    if faction == "Horde" or faction == "Alliance" then
+        cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos_" ..
+            (faction == "Horde" and "horde" or "alliance") .. ".tga"
+    end
+end)
+MHH_enclosFondImg:SetTexture(cheminEnclos)
+MHH_enclosFondImg:SetDrawLayer("BACKGROUND", 2) -- au-dessus du repli (niveau 0-1)
 
 -- Mini-météo de l'enclos : reprend la météo réelle du client (C_Weather,
 -- serveur Forever) — pluie/neige/tempête tombent dans l'enclos et le ciel
