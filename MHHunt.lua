@@ -5830,14 +5830,16 @@ MHH_armesVide:SetText(L("|cffa58b54Aucune prise mesurée encore — l'arme de vo
 MHH_armesVide:SetWidth(196)
 MHH_armesVide:Hide()
 MHH_armesBarres = {}
--- HISTOGRAMME à COLONNES FIXES : les 14 types d'armes canoniques, TOUJOURS
--- affichés (même à 0), en 2 rangées de 7. Barres de BAS en HAUT, libellé
--- court horizontal SOUS l'axe, compte au-dessus de la barre. Tout tient
--- dans le panneau (290x196) — pas de rotation (indisponible en Vanilla).
+-- HISTOGRAMME (layout IMMANQUABLE, tout est ancré depuis le BAS du panneau) :
+-- pour chaque type d'arme DE LA CLASSE du chasseur : une colonne dont la
+-- barre monte depuis une ligne d'axe explicite. Deux rangées empilées ;
+-- dans chaque rangée, de BAS en haut : libellé, axe, barre, piste.
 function MHH_RaffraichirArmesHistogramme()
     if not DB then return end
+    -- comptes par type de la classe
+    local types = MHH_TypesArmesJoueur()
     local comptes = {}
-    for _, canon in ipairs(MHH_TYPES_ARMES) do comptes[canon] = 0 end
+    for _, canon in ipairs(types) do comptes[canon] = 0 end
     if DB.armes then
         for arme, n in pairs(DB.armes) do
             local canon = NormaliserTypeArme(arme)
@@ -5847,16 +5849,24 @@ function MHH_RaffraichirArmesHistogramme()
     local total = 0
     for _, n in pairs(comptes) do total = total + n end
     MHH_armesVide:SetShown(total == 0)
-    -- Types de la CLASSE du chasseur ; les colonnes se répartissent sur
-    -- 2 rangées équilibrées (4-6 par rangée selon la classe)
-    local types = MHH_TypesArmesJoueur()
+    -- répartition en rangées
     local nbTypes = #types
     local nbCol = math.ceil(nbTypes / 2)
-    if nbCol < 4 then nbCol = nbTypes end  -- une seule rangée si peu de types
-    local marge = 10                     -- marge latérale
-    local zoneW = 280 - marge * 2        -- 260 utiles
-    local colW = math.floor(zoneW / math.max(nbCol, 1))
-    local hMax = 40                      -- hauteur max des barres
+    if nbCol < 4 then nbCol = nbTypes end
+    local nbRangs = math.ceil(nbTypes / nbCol)
+    -- géométrie (panneau 280x158, TOUT depuis le BAS) :
+    local margeBas = 8     -- liseré bas
+    local hLbl = 12        -- libellé court
+    local hMax = 40        -- barres
+    local hCmp = 12        -- compte
+    -- hauteur d'une rangée complète + intervalle
+    local pitchRang = hLbl + 4 + hMax + 4 + hCmp
+    -- la 1re rangée (rang=0) est EN BAS, la 2e au-dessus
+    -- axe de la rangée r, mesuré DEPUIS LE BAS du panneau :
+    --   bas rangée 0 : margeBas + hLbl + 4 (libellé sous l'axe)
+    local axe0 = margeBas + hLbl + 4
+    -- intervalle au-dessus d'une rangée pour le compte de la suivante
+    local ecartRangs = hCmp + 6
     for i, canon in ipairs(types) do
         local barre = MHH_armesBarres[i]
         if not barre then
@@ -5868,41 +5878,38 @@ function MHH_RaffraichirArmesHistogramme()
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             barre.txt:SetJustifyH("CENTER")
             barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            barre.count:SetJustifyH("CENTER")
             MHH_armesBarres[i] = barre
         end
         local n = comptes[canon]
-        -- rangée (0 ou 1) et position dans la rangée
         local rang = math.floor((i - 1) / nbCol)
         local col = (i - 1) % nbCol
-        -- géométrie de la rangée (ancrée depuis le HAUT du panneau)
-        local nbRangs = math.ceil(nbTypes / nbCol)
-        -- pitch d'une rangée : barres + libellé ; les axes se répartissent
-        -- du HAUT du panneau (rangée 0 en premier), centrés sous le titre
-        local pitch = hMax + 16           -- barres + libellé court
-        local topY = 22 + math.max(0, (158 - 22 - 12 - nbRangs * pitch) / 2)
-        local axeY = topY + rang * pitch + hMax   -- axe de la rangée (depuis haut)
-        local x = marge + col * colW
-        local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
-        -- piste de fond (repère pleine hauteur) : de axeY-hMax à axeY
-        barre.fond:SetSize(colW - 6, hMax)
-        barre.fond:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, axeY - hMax)
-        barre.fill:SetShown(n > 0)
-        if n > 0 then
-            barre.fill:SetSize(colW - 6, h)
-            barre.fill:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, axeY - h)
-        end
-        -- libellé court SOUS l'axe, horizontal, centré sur la colonne
+        -- position horizontale
+        local margeCote = 10
+        local colW = math.floor((280 - margeCote * 2) / nbCol)
+        local x = margeCote + col * colW
+        -- AXE de la rangée depuis le BAS : rangée 0 en bas, rangée 1 dessus
+        local axeDepuisBas = axe0 + rang * (hMax + ecartRangs)
+        -- LIBELLE : sous l'axe (entre axe et bas de rangée)
         barre.txt:ClearAllPoints()
-        barre.txt:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, axeY + 2)
+        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOM", x + colW / 2, axeDepuisBas - 2)
         barre.txt:SetWidth(colW)
         barre.txt:SetText("|cffd8c9a3" .. (MHH_TYPES_ARMES_COURT[canon] or canon) .. "|r")
-        -- compte DANS la piste, en haut (jamais hors panneau : la piste
-        -- fait hMax de haut, le compte s'y loge toujours)
+        -- PISTE (repère) : monte de l'axe sur hMax
+        barre.fond:SetSize(colW - 6, hMax)
+        barre.fond:ClearAllPoints()
+        barre.fond:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + (colW - 6) / 2, axeDepuisBas)
+        -- BARRE : monte de l'axe sur h
+        local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
+        barre.fill:ClearAllPoints()
+        barre.fill:SetSize(colW - 6, h)
+        barre.fill:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + (colW - 6) / 2, axeDepuisBas)
+        barre.fill:SetShown(n > 0)
+        -- COMPTE : au sommet de la barre (h+2 au-dessus de l'axe ; pour h=0,
+        -- il repose sur l'axe — jamais de chevauchement de rangée : l'écart
+        -- ecartRangs compte hCmp+6 pour lui laisser la place)
         barre.count:ClearAllPoints()
-        barre.count:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, (axeY - hMax) + 2)
-        barre.count:SetTextColor(1, 1, 1, 1)
-        barre.count:SetShadowColor(0, 0, 0, 0.9)
-        barre.count:SetShadowOffset(1, -1)
+        barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + (colW - 6) / 2, axeDepuisBas + h + 2)
         barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff7777770|r")
     end
 end
