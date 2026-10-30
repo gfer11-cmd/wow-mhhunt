@@ -2095,6 +2095,17 @@ MHH_TYPES_ARMES = {
     "Haches", "Haches à deux mains", "Armes de pugilat", "Armes d'hast",
     "Arcs", "Arbalètes", "Bâtons", "Baguettes", "Armes à feu",
 }
+-- Libellés COURTS (affichés horizontalement sous chaque colonne — pas de
+-- rotation en Vanilla, les noms complets ne tiendraient pas)
+MHH_TYPES_ARMES_COURT = {
+    ["Dagues"] = "Dagues", ["Epées"] = "Epées",
+    ["Epées à deux mains"] = "Epées 2M", ["Masses"] = "Masses",
+    ["Masses à deux mains"] = "Masses 2M", ["Haches"] = "Haches",
+    ["Haches à deux mains"] = "Haches 2M", ["Armes de pugilat"] = "Pugilat",
+    ["Armes d'hast"] = "Hast", ["Arcs"] = "Arcs",
+    ["Arbalètes"] = "Arb.", ["Bâtons"] = "Bâtons",
+    ["Baguettes"] = "Bagu.", ["Armes à feu"] = "Fusils",
+}
 -- Normalisation : le client FR écrit parfois « Epées » ou « Épées » (accent),
 -- et le tooltip peut coller la classe de l'arme en majuscules.
 local function NormaliserTypeArme(t)
@@ -5749,8 +5760,8 @@ MHH_armesBtn:SetScript("OnEnter", function(self)
 end)
 MHH_armesBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 MHH_armesPan = CreateFrame("Frame", nil, pageProfil, MHH_TEMPLATE_BACKDROP)
-MHH_armesPan:SetPoint("TOPLEFT", MHH_armesBtn, "BOTTOMLEFT", -10, -8)
-MHH_armesPan:SetSize(232, 168)
+MHH_armesPan:SetPoint("TOPLEFT", MHH_armesBtn, "BOTTOMLEFT", -38, -8)
+MHH_armesPan:SetSize(290, 196)
 MHH_armesPan:Hide()
 MHH_armesPan:SetFrameStrata("HIGH")
 -- L'histogramme suit la fenêtre et l'onglet : jamais d'encart orphelin
@@ -5775,12 +5786,12 @@ MHH_armesVide:SetText(L("|cffa58b54Aucune prise mesurée encore — l'arme de vo
 MHH_armesVide:SetWidth(196)
 MHH_armesVide:Hide()
 MHH_armesBarres = {}
--- HISTOGRAMME VERTICAL FIXE : une colonne par TYPE D'ARME canonique (les 14
--- possibles), même à 0 — le chasseur voit sa prédilection d'un coup d'œil.
--- Barres de bas en haut, type en vertical SOUS l'axe, compte au-dessus.
+-- HISTOGRAMME à COLONNES FIXES : les 14 types d'armes canoniques, TOUJOURS
+-- affichés (même à 0), en 2 rangées de 7. Barres de BAS en HAUT, libellé
+-- court horizontal SOUS l'axe, compte au-dessus de la barre. Tout tient
+-- dans le panneau (290x196) — pas de rotation (indisponible en Vanilla).
 function MHH_RaffraichirArmesHistogramme()
     if not DB then return end
-    -- compte par type canonique (les graphies inconnues sont ignorées)
     local comptes = {}
     for _, canon in ipairs(MHH_TYPES_ARMES) do comptes[canon] = 0 end
     if DB.armes then
@@ -5792,12 +5803,11 @@ function MHH_RaffraichirArmesHistogramme()
     local total = 0
     for _, n in pairs(comptes) do total = total + n end
     MHH_armesVide:SetShown(total == 0)
-    local nb = #MHH_TYPES_ARMES
-    local margeG, margeD = 8, 8
-    local zoneW = 232 - margeG - margeD       -- 216 utiles
-    local axeY = 122                          -- ligne de sol (depuis le HAUT)
-    local hMax = 76                           -- hauteur max des barres
-    local colW = math.floor(zoneW / nb)       -- ~15px par colonne
+    local nbCol = 7                      -- colonnes par rangée
+    local marge = 12                     -- marge latérale
+    local zoneW = 290 - marge * 2        -- 266 utiles
+    local colW = math.floor(zoneW / nbCol)   -- 38px par colonne
+    local hMax = 48                      -- hauteur max des barres
     for i, canon in ipairs(MHH_TYPES_ARMES) do
         local barre = MHH_armesBarres[i]
         if not barre then
@@ -5807,29 +5817,36 @@ function MHH_RaffraichirArmesHistogramme()
             barre.fill = MHH_armesPan:CreateTexture(nil, "ARTWORK")
             barre.fill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            barre.txt:SetJustifyH("CENTER")
             barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            pcall(function() barre.txt:SetRotation(math.rad(-90)) end)
             MHH_armesBarres[i] = barre
         end
         local n = comptes[canon]
-        local x = margeG + (i - 1) * colW
+        -- rangée (0 ou 1) et position dans la rangée
+        local rang = math.floor((i - 1) / nbCol)
+        local col = (i - 1) % nbCol
+        -- géométrie de la rangée (ancrée depuis le HAUT du panneau)
+        local titreH = 34                 -- titre + place pour le compte au-dessus
+        local rangH = titreH + hMax + 16  -- barres + libellé
+        local axeY = titreH + rang * rangH + hMax   -- axe de la rangée (depuis haut)
+        local x = marge + col * colW
         local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
-        -- piste de fond pleine hauteur (repère), remplissage si > 0
-        barre.fond:SetSize(colW - 3, hMax)
-        barre.fond:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, 168 - axeY - hMax)
+        -- piste de fond (repère pleine hauteur) : de axeY-hMax à axeY
+        barre.fond:SetSize(colW - 6, hMax)
+        barre.fond:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, axeY - hMax)
         barre.fill:SetShown(n > 0)
         if n > 0 then
-            barre.fill:SetSize(colW - 3, h)
-            barre.fill:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, 168 - axeY - h)
+            barre.fill:SetSize(colW - 6, h)
+            barre.fill:SetPoint("TOPLEFT", MHH_armesPan, "TOPLEFT", x, axeY - h)
         end
-        -- type d'arme en vertical sous l'axe
+        -- libellé court SOUS l'axe, horizontal, centré sur la colonne
         barre.txt:ClearAllPoints()
-        barre.txt:SetPoint("TOPRIGHT", MHH_armesPan, "TOPLEFT", x + colW - 2, 168 - axeY + 2)
-        barre.txt:SetWidth(40)
-        barre.txt:SetText("|cffd8c9a3" .. canon .. "|r")
-        -- compte au-dessus de la barre (ou sur l'axe si 0)
+        barre.txt:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, axeY + 2)
+        barre.txt:SetWidth(colW)
+        barre.txt:SetText("|cffd8c9a3" .. (MHH_TYPES_ARMES_COURT[canon] or canon) .. "|r")
+        -- compte au-dessus de la barre (ancré depuis le HAUT : y = sommet-haut-2)
         barre.count:ClearAllPoints()
-        barre.count:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + colW / 2, 168 - axeY - h - 2)
+        barre.count:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, (axeY - hMax) - h - 2)
         barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff5555550|r")
     end
 end
