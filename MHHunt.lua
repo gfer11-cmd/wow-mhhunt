@@ -6543,7 +6543,7 @@ for i = 1, 18 do
     p:SetSize(2, 7)
     p:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", 0, 0)
     p:Hide()
-    MHH_particulesMenagerie[i] = { t = p, x = math.random() * 532, y = math.random() * 166,
+    MHH_particulesMenagerie[i] = { t = p, x = math.random() * 532, y = math.random() * 176,
                                v = 0, dir = 1 }
 end
 local function ConfigurerMeteoEnclos(cle)
@@ -6597,7 +6597,7 @@ local function ConfigurerParticulesEnclos(cle)
             else -- firestorm : braises qui remontent
                 p.v, p.dir = 0.8 + math.random(), -1
             end
-            p.y = math.random() * 166
+            p.y = math.random() * 176
         else
             p.v = 0
             p.t:Hide()
@@ -6845,8 +6845,8 @@ local function BoucleMenagerie()
                 if p.x > 532 then p.x = 0 end
             end
             -- hors enclos : on réapparaît de l'autre côté
-            if p.dir > 0 and p.y > 166 then p.y = -8 p.x = math.random() * 532 end
-            if p.dir < 0 and p.y < -8 then p.y = 166 p.x = math.random() * 532 end
+            if p.dir > 0 and p.y > 176 then p.y = -8 p.x = math.random() * 532 end
+            if p.dir < 0 and p.y < -8 then p.y = 176 p.x = math.random() * 532 end
             p.t:ClearAllPoints()
             p.t:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", p.x, p.y)
         end
