@@ -15,6 +15,7 @@ local defaults = {
     contratHistorique = {}, -- [{ nom, date }] derniers contrats remplis
     primesGagnees = 0,     -- total de points gagnés via les primes
     menagerie = {},       -- spécimens capturés (piège + kill) : [{capture, nourri, gate}]
+    enclosActif = nil,    -- biome de l'enclos affiché (savane par défaut)
     config = {
         banniere = true,
         son = true,
@@ -1033,6 +1034,9 @@ MHH_CATALOGUE = {
     ["Zul'arek Haine-ramée"] = "Les Hinterlands",
     ["Casses-Cornes"] = "Gorges des Chants éternels",
 }
+-- (succès ménagerie ajoutés à la table par MHH_AjouterSuccesMenagerie,
+-- juste après la déclaration — affinité 100 et enclos complet)
+
 MHH_SUCCES = {
     -- La chasse
     { id = "premiere",   cat = L("La chasse"),        tex = "INV_Sword_09",                 nom = L("Première chasse"),      desc = L("Tuer son premier monstre du carnet") },
@@ -1063,6 +1067,9 @@ MHH_SUCCES = {
     { id = "pluie",      cat = L("Les éléments"),      tex = "Spell_Frost_Frostbolt",        nom = L("Danse de la pluie"),     desc = L("Réussir une chasse sous la pluie") },
     { id = "feu",        cat = L("Les éléments"),      tex = "Spell_Fire_FireBolt",          nom = L("Chasseur de l'apocalypse"), desc = L("Réussir une chasse pendant une pluie de feu") },
     { id = "neige",      cat = L("Les éléments"),      tex = "Spell_Frost_FrostArmor",       nom = L("Traqueur des neiges"),   desc = L("Réussir une chasse sous la neige") },
+    -- La ménagerie
+    { id = "amidevoue",  cat = L("La ménagerie"), tex = "Ability_Hunter_BeastTaming", nom = L("Ami dévoué"), desc = L("Amener un pensionnaire à 100 d'affinité") },
+    { id = "encloscomplet", cat = L("La ménagerie"), tex = "INV_Misc_Cage_01", nom = L("Enclos complet"), desc = L("Avoir tous les spécimens de la savane en enclos") },
 }
 
 local function nbChasses()
@@ -1788,6 +1795,32 @@ MHH_SPECIMENS_ORDRE = {
     "Capitaine Croc-Plat", "Grand crocolisque du loch",
 }
 
+-- ENCLOS PAR BIOME : chaque pensionnaire vit dans le biome de son habitat.
+-- Un enclos se DÉBLOQUE au fil du rang de guilde — le régisseur agrandit
+-- le ranch. Le fond de l'enclos change avec le biome sélectionné.
+MHH_ENCLOS = {
+    { cle = "savane",   nom = L("Enclos de la savane"),   rang = 1,
+      specimens = { "Humar le Seigneur hautain", "Takk le Bondisseur",
+                    "Mazzranache", "Sarkoth" } },
+    { cle = "marais",   nom = L("Enclos des marais"),     rang = 2,
+      specimens = { "Flagglemurk le Cruel", "Naraxis",
+                    "Grand crocolisque du loch" } },
+    { cle = "montagne", nom = L("Enclos des montagnes"), rang = 3,
+      specimens = { "Capitaine Croc-Plat", "Snarlflare", "Mor'Ladim" } },
+    { cle = "volcan",   nom = L("Enclos du volcan"),     rang = 4,
+      specimens = {} }, -- les pensionnaires y sont déplacés à la main
+}
+-- Zone d'un spécimen (habitat) -> enclos de rattachement
+MHH_ENCLOS_DU_SPECIMEN = {}
+for _, enc in ipairs(MHH_ENCLOS) do
+    for _, nom in ipairs(enc.specimens) do
+        MHH_ENCLOS_DU_SPECIMEN[nom] = enc.cle
+    end
+end
+-- Rang de guilde requis pour un enclos (par clé)
+MHH_ENCLOS_RANG = {}
+for i, enc in ipairs(MHH_ENCLOS) do MHH_ENCLOS_RANG[enc.cle] = enc.rang end
+
 -- ============================================
 -- 4. RANGS DE GUILDE, NOTES, ÉTAT DE CHASSE
 -- ============================================
@@ -1798,6 +1831,8 @@ local chasseActive = nil   -- nom du monstre chassé
 local MHH_ArreterMusique
 local MHH_JouerMusique
 local JouerJingleVictoire -- carillon « quête terminée » (SoundKit 619), section musiques
+local ZoneAvecAmiDevoue -- affinité ménagerie : bonus de zone (section ménagerie)
+local Affinite -- jauge d'affinité d'un pensionnaire (section ménagerie)
 local dernierJingleTemps -- horodatage du dernier carillon (protège le cut SFX différé)
 -- Chasse suspendue (cible perdue hors combat, bête enfuie) : on garde tout
 -- pour REPRENDRE la chasse là où elle en était si on re-cible la bête
@@ -2216,6 +2251,17 @@ local function FinChasseVictoire(nom)
             DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffff7a1a" .. r.nom .. L("|r savouré : +") .. r.bonus .. L(" points de chasse !"))
         end
         DB.repas = nil
+    end
+    -- AMI DÉVOUÉ : un pensionnaire dévoué de cette zone encourage le
+    -- chasseur depuis l'enclos — la guilde le récompense (+10% des points).
+    local amiDevoue = ZoneAvecAmiDevoue(MHH_CATALOGUE[nom])
+    if amiDevoue then
+        local bonus = math.floor(pts * 0.1)
+        if bonus > 0 then
+            pts = pts + bonus
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff8800") .. amiDevoue
+                .. L("|r, dévoué, applaudit votre prise depuis l'enclos : +") .. bonus .. L(" points !"))
+        end
     end
     DB.points = (DB.points or 0) + pts
     local zone = MHH_CATALOGUE[nom] or GetZoneText()
@@ -2940,6 +2986,36 @@ local function ContratQuotidien()
     end
 end
 
+-- PISTE QUOTIDIENNE du pensionnaire dévoué : une fois par jour, un ami à
+-- 100 d'affinité « sent » un rare de sa zone et le signale au chasseur.
+local function PisteQuotidienneAmi()
+    if not (DB and DB.menagerie) then return end
+    local aujourdhui = date("%y%m%d")
+    if DB.pisteAmiDate == aujourdhui then return end -- déjà servie aujourd'hui
+    -- premier pensionnaire dévoué trouvé
+    local ami, zoneAmi
+    for nom, m in pairs(DB.menagerie) do
+        if Affinite(m) >= 100 then
+            ami, zoneAmi = nom, MHH_CATALOGUE[nom]
+            break
+        end
+    end
+    if not ami then return end
+    -- rares du catalogue dans cette zone (pas encore pris aujourd'hui)
+    local candidats = {}
+    for nomC, z in pairs(MHH_CATALOGUE) do
+        if z == zoneAmi and MHH_EstNomAffichable(nomC) then
+            candidats[#candidats + 1] = nomC
+        end
+    end
+    if #candidats == 0 then return end
+    DB.pisteAmiDate = aujourdhui
+    local cible = candidats[math.random(#candidats)]
+    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff8800") .. ami
+        .. L("|r lève le museau : un gibier rôde du côté de |cffffff00")
+        .. zoneAmi .. L("|r — |cffffcc66") .. cible .. L("|r, selon lui."))
+end
+
 -- Annonce de zone : bandeau discret quand on entre dans une région qui
 -- compte du gibier au catalogue (« Vous entrez dans les Taris » à la MH)
 local annonceZoneFrame = nil
@@ -3074,6 +3150,8 @@ local function OnEvenementPrincipal(self, event, ...)
             end
             if AppliquerTextures then AppliquerTextures() end
             if AppliquerTexUI then AppliquerTexUI() end
+            -- Piste du pensionnaire dévoué (une fois par jour, après l'init)
+            pcall(PisteQuotidienneAmi)
             DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r chargé. /hunt pour ouvrir le carnet. ") .. nbChasses() .. L(" chasses au compteur."))
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -6364,16 +6442,32 @@ MHH_enclosSol:SetHeight(92)
 MHH_enclosSol:SetColorTexture(0.42, 0.60, 0.30, 1)
 -- L'IMAGE PEINTE : dessinée après = AU-DESSUS du repli. Le TGA opaque
 -- la recouvre entièrement quand il est présent.
-local cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos.tga"
-pcall(function()
-    local faction = UnitFactionGroup and UnitFactionGroup("player")
-    if faction == "Horde" or faction == "Alliance" then
-        cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos_" ..
-            (faction == "Horde" and "horde" or "alliance") .. ".tga"
-    end
-end)
-MHH_enclosFondImg:SetTexture(cheminEnclos)
-MHH_enclosFondImg:SetDrawLayer("BACKGROUND", 2) -- au-dessus du repli (niveau 0-1)
+-- Biome affiché = enclos sélectionné (savane/marais/montagne/volcan),
+-- ESTOMPÉ par la teinte de faction (horde chaud / alliance froid) tant
+-- qu'aucun fond de biome n'existe pour la clé. Ordre de préférence :
+--   1. enclos_<biome>.tga (fond du biome sélectionné)
+--   2. enclos_<faction>.tga (ranch de la faction)
+--   3. enclos.tga (neutre)
+local function MHH_ChargerFondEnclos()
+    if not (MHH_enclosFondImg and DB) then return end
+    local biome = DB.enclosActif or "savane"
+    local essais = {
+        "Interface\\AddOns\\MHHunt\\Textures\\enclos_" .. biome .. ".tga",
+    }
+    pcall(function()
+        local faction = UnitFactionGroup and UnitFactionGroup("player")
+        if faction == "Horde" or faction == "Alliance" then
+            essais[#essais + 1] = "Interface\\AddOns\\MHHunt\\Textures\\enclos_"
+                .. (faction == "Horde" and "horde" or "alliance") .. ".tga"
+        end
+    end)
+    essais[#essais + 1] = "Interface\\AddOns\\MHHunt\\Textures\\enclos.tga"
+    MHH_enclosFondImg:SetTexture(essais[1])
+    -- (Vanilla : pas de retour de SetTexture — le premier chemin qui existe
+    -- gagne ; les fonds de biome manquants retombent sur la faction/neutre
+    -- via la teinte, le repli procedural reste dessous en pire cas.)
+end
+MHH_ChargerFondEnclos()
 
 -- Mini-météo de l'enclos : reprend la météo réelle du client (C_Weather,
 -- serveur Forever) — pluie/neige/tempête tombent dans l'enclos et le ciel
@@ -6469,6 +6563,44 @@ local function EtatSpecimen(m)
     if d < 86400 then return "repu", "|cffa0ff50Repu|r"
     elseif d < 259200 then return "faim", "|cffffd100Petite faim|r"
     else return "affame", L("|cffd87a6aAffamé|r") end
+end
+
+-- AFFINITÉ (0-100) : nourrir +4, gâter au miel +10 ; dégrise de 2/jour sans
+-- soin. À 100, le pensionnaire est « dévoué » : +10% points de chasse dans
+-- sa zone d'habitat, et une piste quotidienne sur un rare de sa zone.
+Affinite = function(m)
+    if not m then return 0 end
+    local base = m.affinite or 0
+    -- décroissance : 2 points par jour écoulé depuis le dernier soin
+    local dernier = m.dernierSoin or m.capture or time()
+    local jours = math.floor((time() - dernier) / 86400)
+    return math.max(0, math.min(100, base - jours * 2))
+end
+local function AffiniteLibelle(v)
+    if v >= 100 then return "|cffff8800Dévoué|r"
+    elseif v >= 60 then return "|cffffd100Attaché|r"
+    elseif v >= 25 then return "|cffa58b54Apprivoisé|r"
+    else return "|cff8a6d3bMéfiant|r" end
+end
+local function SoinSpecimen(m, gain)
+    if not m then return end
+    m.affinite = Affinite(m) + gain          -- repart du valeur déclinée
+    if m.affinite > 100 then m.affinite = 100 end
+    m.dernierSoin = time()
+    -- Succès « Ami dévoué » : le premier pensionnaire à 100 d'affinité
+    if m.affinite >= 100 and DB and DB.succes and not DB.succes["amidevoue"] then
+        DebloquerSucces("amidevoue")
+    end
+end
+-- Le pensionnaire dévoué d'une zone donne-t-il un bonus de chasse ici ?
+-- (déclarée en tête de fichier : FinChasseVictoire l'appelle avant)
+ZoneAvecAmiDevoue = function(zone)
+    if not (DB and DB.menagerie) then return false end
+    for nom, m in pairs(DB.menagerie) do
+        local z = MHH_CATALOGUE[nom]
+        if z == zone and Affinite(m) >= 100 then return true, nom end
+    end
+    return false
 end
 local function IlYA(t)
     local d = time() - t
@@ -6670,11 +6802,28 @@ local function BoucleMenagerie()
             p.t:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", p.x, p.y)
         end
     end
+    -- INTRUS ACTIF : les pensionnaires paniquent (vitesse x4, direction
+    -- fuante) jusqu'à ce que l'intrus s'en aille.
+    local peur = MHH_intrus.nom and GetTime() < MHH_intrus.jusqua
+    if MHH_intrus.nom and not peur then
+        -- l'intrus s'enfuit : message de fin une seule fois
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffffcc66")
+            .. MHH_intrus.nom .. L("|r repart d'où il vient. Le troupeau se calme."))
+        MHH_intrus.nom = nil
+    end
     for nom, s in pairs(MHH_spritesMenagerie) do
         local m = DB.menagerie and DB.menagerie[nom]
         if m then
             local etat = EtatSpecimen(m)
             local gate = m.gate and (time() - m.gate) < 3600
+            if peur then
+                s.vNormale = s.vNormale or s.v   -- mémorise l'allure normale
+                s.v = 1.2                        -- panique : vitesse multipliée
+                s.dir = (s.x < 266) and -1 or 1   -- fuir vers le bord proche
+            elseif s.vNormale then
+                s.v = s.vNormale                 -- l'intrus parti : reprise
+                s.vNormale = nil
+            end
             s.f:ClearAllPoints()
             -- Ombre portée : créée au premier passage, elle suit le sprite
             -- (ellipse sombre au sol, le bob la fait légèrement respirer).
@@ -6745,9 +6894,47 @@ local function DemarrerMenagerie()
 end
 pageMenagerie:HookScript("OnHide", ArreterMenagerie)
 
+-- SÉLECTEUR D'ENCLOS : un onglet par biome, débloqué au rang de guilde.
+-- Le fond de l'enclos suit le biome choisi ; les slots ne montrent que
+-- les pensionnaires/espèces de CE biome.
+-- RaffraichirMenagerie est une fonction GLOBALE définie plus bas ; les
+-- sélecteurs l'appellent à retardement (OnClick), donc pas de souci d'ordre.
+MHH_boutonsEnclos = {}
+for idxEnc, enc in ipairs(MHH_ENCLOS) do
+    local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
+    -- rangée d'onglets juste SOUS le titre (l'enclos commence à -32)
+    b:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT",
+        10 + (idxEnc - 1) * 116, -14)
+    b:SetSize(112, 16)
+    b:SetNormalFontObject("GameFontHighlightSmall")
+    b:SetText(enc.nom)
+    b:GetFontString():SetPoint("CENTER", 0, 0)
+    b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    pcall(function()
+        b:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = false, edgeSize = 6,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 },
+        })
+    end)
+    MHH_boutonsEnclos[enc.cle] = b
+    b:SetScript("OnClick", function()
+        if not DB then return end
+        local idxRang = RangGuilde(DB.points or 0)
+        if idxRang < enc.rang then
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r L'") .. enc.nom
+                .. L(" s'ouvre au rang |cffffff00") .. MHH_RANGS[enc.rang].nom .. L("|r — continuez à chasser."))
+            return
+        end
+        DB.enclosActif = enc.cle
+        if MHH_ChargerFondEnclos then MHH_ChargerFondEnclos() end
+        RaffraichirMenagerie()
+    end)
+end
+
 -- Slots de sélection (4 x 2) : un par spécimen possible, « ??? » si
 -- pas encore capturé
-local RaffraichirMenagerie -- déclaré ici : les boutons l'appellent
 MHH_boutonsSpecimen = {}
 local function BoutonSpecimen(i)
     local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
@@ -6769,14 +6956,15 @@ local function BoutonSpecimen(i)
     -- Surbrillance sur TOUT le bouton (le vieux Quickslot2 était illisible)
     b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     b:SetScript("OnClick", function()
-        MHH_selectionMenagerie = MHH_SPECIMENS_ORDRE[i]
+        -- le nom réel vient du biome affiché (MHH_boutonsSpecimen[i].nomSpecimen)
+        MHH_selectionMenagerie = b.nomSpecimen or MHH_SPECIMENS_ORDRE[i]
         RaffraichirMenagerie()
     end)
     -- Tooltip : explique ce que montre le bouton (le « ???/famille »
     -- n'était pas clair sans explication)
     b:SetScript("OnEnter", function()
         if not GameTooltip then return end
-        local nom = MHH_SPECIMENS_ORDRE[i]
+        local nom = b.nomSpecimen or MHH_SPECIMENS_ORDRE[i]
         local m = DB.menagerie and DB.menagerie[nom]
         GameTooltip:SetOwner(b, "ANCHOR_TOPLEFT")
         if m then
@@ -6851,6 +7039,7 @@ MHH_boutonNourrir:SetScript("OnClick", function()
     end
     DB.viande = DB.viande - 1
     m.nourri = time()
+    SoinSpecimen(m, 4)
     DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffffff00" .. MHH_selectionMenagerie
         .. L("|r se régale d'une viande de gibier."))
     RaffraichirMenagerie()
@@ -6883,6 +7072,7 @@ MHH_boutonGater:SetScript("OnClick", function()
     end
     DB.miel = DB.miel - 1
     m.gate = time()
+    SoinSpecimen(m, 10)
     DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffffff00" .. MHH_selectionMenagerie
         .. "|r savoure son miel — regarde-le sauter de joie !")
     RaffraichirMenagerie()
@@ -6950,6 +7140,7 @@ MHH_boutonTous:SetScript("OnClick", function()
             if (DB.viande or 0) < 1 then break end
             DB.viande = DB.viande - 1
             m.nourri = time()
+            SoinSpecimen(m, 2)
             nourris = nourris + 1
         end
     end
@@ -6962,12 +7153,80 @@ MHH_boutonTous:SetScript("OnClick", function()
     RaffraichirMenagerie()
 end)
 
+-- INTRUS : parfois (20% à l'ouverture de l'onglet, 1 fois/heure max), un
+-- gibier sauvage surgit dans l'enclos et affole les pensionnaires pendant
+-- 12 s (ils se dispersent) ; s'il est encore là, il s'enfuit. Le message
+-- indique sa zone — le chasseur sait où traquer la bestiole effrontée.
+MHH_intrus = { nom = nil, jusqua = 0 }
+local function PeutDeclencherIntrus()
+    if not DB then return false end
+    if not DB.menagerie then return false end
+    local nb = 0
+    for _ in pairs(DB.menagerie) do nb = nb + 1 end
+    if nb == 0 then return false end        -- enclos vide : rien à effrayer
+    if time() < (DB.intrusCooldown or 0) then return false end
+    return math.random(100) <= 20
+end
+local function DeclencherIntrus()
+    -- un rare du catalogue, de préférence de la zone d'un pensionnaire
+    local candidats = {}
+    for nomC in pairs(MHH_CATALOGUE) do
+        if MHH_EstNomAffichable(nomC) then candidats[#candidats + 1] = nomC end
+    end
+    if #candidats == 0 then return end
+    local intrusNom = candidats[math.random(#candidats)]
+    MHH_intrus.nom = intrusNom
+    MHH_intrus.jusqua = GetTime() + 12
+    DB.intrusCooldown = time() + 3600
+    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff5050Un intrus !|r ")
+        .. intrusNom .. L(" saute la clôture de l'enclos et effraye le troupeau !"))
+    ToastSucces("Interface\\Icons\\Ability_Hunter_BeastTaming",
+        L("Intrus dans l'enclos"), intrusNom)
+end
+
 function RaffraichirMenagerie()
     if not DB then return end
     DB.menagerie = DB.menagerie or {}
-    -- Sprites : créer si besoin, montrer/cacher selon capture
+    -- INTRUS : tirage à l'ouverture de l'enclos (garde-fou anti-spam)
+    if not MHH_intrus.nom and PeutDeclencherIntrus() then DeclencherIntrus() end
+    -- Succès « Enclos complet » : tous les spécimens de la savane capturés
+    if DB.succes and not DB.succes["encloscomplet"] then
+        local complet = true
+        for _, nomC in ipairs(MHH_ENCLOS[1].specimens) do
+            if not DB.menagerie[nomC] then complet = false break end
+        end
+        if complet then DebloquerSucces("encloscomplet") end
+    end
+    -- Enclos actif : le biome de rattachement du spécimen sélectionné, sinon
+    -- le premier enclos débloqué (les vieux perros ont « savane » par défaut).
+    local biome = DB.enclosActif or "savane"
+    -- Onglets du sélecteur : actif = doré, verrouillé = grisé, dispo = neutre
+    local idxRang = RangGuilde(DB.points or 0)
+    for _, enc in ipairs(MHH_ENCLOS) do
+        local b = MHH_boutonsEnclos[enc.cle]
+        if b then
+            if enc.cle == biome then
+                b:GetFontString():SetText("|cffffd100" .. enc.nom .. "|r")
+            elseif idxRang < enc.rang then
+                b:GetFontString():SetText("|cff555555" .. enc.nom .. "|r")
+            else
+                b:GetFontString():SetText(enc.nom)
+            end
+        end
+    end
+    -- Pensionnaires du biome affiché (ranch des savanes au premier plan)
+    local specimensBiome = {}
+    for _, enc in ipairs(MHH_ENCLOS) do
+        if enc.cle == biome then
+            for _, nom in ipairs(enc.specimens) do
+                specimensBiome[#specimensBiome + 1] = nom
+            end
+        end
+    end
+    -- Sprites : créer si besoin, montrer/cacher selon capture ET biome
     for _, nom in ipairs(MHH_SPECIMENS_ORDRE) do
-        if DB.menagerie[nom] then
+        local dansBiome = (MHH_ENCLOS_DU_SPECIMEN[nom] == biome)
+        if DB.menagerie[nom] and dansBiome then
             if not MHH_spritesMenagerie[nom] then
                 MHH_spritesMenagerie[nom] = {
                     f = CreerSpriteMenagerie(nom),
@@ -6985,19 +7244,30 @@ function RaffraichirMenagerie()
             end
         end
     end
+    -- Ce biome compte-t-il des pensionnaires ?
     local nbCaptures = 0
-    for _ in pairs(DB.menagerie) do nbCaptures = nbCaptures + 1 end
+    for _, nom in ipairs(specimensBiome) do
+        if DB.menagerie[nom] then nbCaptures = nbCaptures + 1 end
+    end
     MHH_enclosVide:SetShown(nbCaptures == 0)
     -- Le régisseur : debout dès qu'il a du monde, roulé en boule sinon
     if MHH_regisseurFrame then MHH_regisseurFrame:SetShown(nbCaptures > 0) end
     if MHH_regisseurDortFrame then MHH_regisseurDortFrame:SetShown(nbCaptures == 0) end
-    -- Slots
-    for i, nom in ipairs(MHH_SPECIMENS_ORDRE) do
+    -- Slots : espèces du biome affiché uniquement (les surnuméraires masqués)
+    for i = #specimensBiome + 1, #MHH_boutonsSpecimen do
+        if MHH_boutonsSpecimen[i] and MHH_boutonsSpecimen[i].Hide then
+            MHH_boutonsSpecimen[i]:Hide()
+        end
+    end
+    for i, nom in ipairs(specimensBiome) do
         if not MHH_boutonsSpecimen[i] then MHH_boutonsSpecimen[i] = BoutonSpecimen(i) end
+        MHH_boutonsSpecimen[i]:Show()
         local capt = DB.menagerie[nom]
+        MHH_boutonsSpecimen[i].nomSpecimen = nom
         if capt then
             local _, libelle = EtatSpecimen(capt)
-            MHH_boutonsSpecimen[i].txt:SetText("|cffffd100" .. nom .. "|r — " .. libelle)
+            MHH_boutonsSpecimen[i].txt:SetText("|cffffd100" .. nom .. "|r — " .. libelle
+                .. " |cffc9a24a(" .. AffiniteLibelle(Affinite(capt)) .. ")|r")
         else
             MHH_boutonsSpecimen[i].txt:SetText("|cff8a6d3b???|r |cffc9a24a(" .. MHH_SPECIMENS[nom].famille .. ")|r")
         end
