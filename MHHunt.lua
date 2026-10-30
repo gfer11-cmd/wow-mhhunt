@@ -2129,12 +2129,12 @@ end
 -- Libellés COURTS (affichés horizontalement sous chaque colonne — pas de
 -- rotation en Vanilla, les noms complets ne tiendraient pas)
 MHH_TYPES_ARMES_COURT = {
-    ["Dagues"] = "Dague", ["Epées"] = "Epée",
-    ["Epées à deux mains"] = "Epée2M", ["Masses"] = "Masse",
+    ["Dagues"] = "Dague", ["Epées"] = "Epee",
+    ["Epées à deux mains"] = "Epee2M", ["Masses"] = "Masse",
     ["Masses à deux mains"] = "Masse2M", ["Haches"] = "Hache",
     ["Haches à deux mains"] = "Hache2M", ["Armes de pugilat"] = "Poing",
     ["Armes d'hast"] = "Hast", ["Arcs"] = "Arc",
-    ["Arbalètes"] = "Arb", ["Bâtons"] = "Bâton",
+    ["Arbalètes"] = "Arb", ["Bâtons"] = "Baton",
     ["Baguettes"] = "Bagu", ["Armes à feu"] = "Fusil",
 }
 -- Normalisation : le client FR écrit parfois « Epées » ou « Épées » (accent),
@@ -5876,12 +5876,18 @@ function MHH_RaffraichirArmesHistogramme()
         barre.fond:SetSize(colW - 8, hMax)
         barre.fond:ClearAllPoints()
         barre.fond:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx - (colW - 8) / 2, axe)
-        -- BARRE : monte de l'axe
-        local h = (total > 0 and n > 0) and math.max(2, math.floor(hMax * n / math.max(total, 1))) or 0
+        -- BARRE : monte de l'axe — MÊME À 0, un bout de colonne reste
+        -- visible (moche sinon : colonne fantôme sans repère)
+        local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 3
         barre.fill:ClearAllPoints()
         barre.fill:SetSize(colW - 8, h)
         barre.fill:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx - (colW - 8) / 2, axe)
-        barre.fill:SetShown(n > 0)
+        barre.fill:Show()
+        if n == 0 then
+            pcall(function() barre.fill:SetVertexColor(0.35, 0.30, 0.20, 0.6) end)
+        else
+            pcall(function() barre.fill:SetVertexColor(1, 1, 1, 1) end)
+        end
         -- COMPTE : au sommet de la barre
         barre.count:ClearAllPoints()
         barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx, axe + h + 1)
@@ -5896,7 +5902,8 @@ function MHH_RaffraichirArmesHistogramme()
             if c ~= " " then lignes[#lignes + 1] = c end
         end
         barre.txt:ClearAllPoints()
-        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx, axe - 1)
+        -- séparé de l'axe par 4 px : le texte ne colle plus à la colonne
+        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx, axe - 5)
         barre.txt:SetWidth(colW + 2)
         barre.txt:SetJustifyH("CENTER")
         barre.txt:SetText("|cffd8c9a3" .. table.concat(lignes, "\n") .. "|r")
