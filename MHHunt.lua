@@ -6330,10 +6330,17 @@ MHH_enclosMenagerie:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 10, -32)
 MHH_enclosMenagerie:SetSize(532, 166)
 MHH_enclosCiel = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
 MHH_enclosCiel:SetAllPoints()
--- Dégradé vertical façon farm sim : 8 bandes du zénith au sol, du plus
--- saturé au plus clair — un ciel plat tuait toute la profondeur.
+-- FOND PEINT : la scène complète (ciel, nuages, soleil, collines, arbre,
+-- herbe texturée, chemin, clôture, grange) est une SEULE image TGA,
+-- générée en pixel art façon Stardew — cf Textures/enclos.tga. Le repli
+-- procedural (bandes de ciel + damier) reste dessous si le fichier manque.
+MHH_enclosFondImg = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
+MHH_enclosFondImg:SetAllPoints(MHH_enclosMenagerie)
+local enclosTgaOk = MHH_enclosFondImg:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\enclos.tga")
+if not enclosTgaOk then MHH_enclosFondImg:Hide() end
+-- Dégradé de ciel procédural (REPLI si le TGA est absent)
 MHH_enclosBandesCiel = {}
-do
+if not enclosTgaOk then
     local HAUT = 166
     local NB = 8
     for b = 1, NB do
@@ -6344,207 +6351,6 @@ do
         bande:SetColorTexture(0.47 + 0.16 * t, 0.66 + 0.12 * t, 0.92 - 0.05 * t, 0.98)
         MHH_enclosBandesCiel[#MHH_enclosBandesCiel + 1] = bande
     end
-end
--- (MHH_enclosCiel reste le fond de repli pour la teinte météo : il est
--- dessous, quasi totalement recouvert par les bandes en temps normal.)
-
--- Décor céleste : soleil, nuages, oiseaux — dessinés APRÈS le ciel pour
--- passer au-dessus, en pixel art cohérent avec la grange et la clôture.
--- Les nuages sont mémorisés : ConfigurerMeteoEnclos les re-teinte avec le
--- cycle jour/nuit (sinon ils restaient blancs pleine nuit).
-MHH_enclosNuages = {}
-do
-    local soleil = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-    soleil:SetSize(26, 26)
-    soleil:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", 448, -10)
-    soleil:SetColorTexture(1.0, 0.92, 0.55, 0.95)
-    local halo = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-    halo:SetSize(38, 38)
-    halo:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", 442, -16)
-    halo:SetColorTexture(1.0, 0.95, 0.70, 0.28)
-    -- 4 nuages : 3 blocs chacun (base pleine + deux bourrelets)
-    local NUAGES = {
-        { x = 60,  y = -18, s = 1.0 },
-        { x = 210, y = -34, s = 0.7 },
-        { x = 330, y = -12, s = 0.85 },
-        { x = 470, y = -40, s = 0.6 },
-    }
-    for _, cfg in ipairs(NUAGES) do
-        local nuage = {}
-        local function bloc(dx, dy, l, h, a)
-            local t = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-            t:SetSize(l * cfg.s, h * cfg.s)
-            t:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", cfg.x + dx * cfg.s, cfg.y + dy * cfg.s)
-            t:SetColorTexture(1, 1, 1, a)
-            nuage[#nuage + 1] = t
-        end
-        bloc(0, 6, 46, 10, 0.92)
-        bloc(10, 0, 26, 8, 0.92)
-        bloc(30, 4, 20, 7, 0.85)
-        MHH_enclosNuages[#MHH_enclosNuages + 1] = nuage
-    end
-    -- Oiseaux : petits « v » migrateurs, discrèts en haut du ciel
-    for i, pos in ipairs({ { 150, -52 }, { 165, -58 }, { 178, -50 } }) do
-        local aile = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-        aile:SetSize(8, 3)
-        aile:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", pos[1], pos[2])
-        aile:SetColorTexture(0.25, 0.28, 0.33, 0.8)
-    end
-end
--- SOL FAÇON STARDREW : l'herbe occupe la moitié basse de la scène (pas
--- une bande de 38 px noyée dans le ciel). Trois couches :
---   1. lointain : collines douces au-dessus de l'horizon
---   2. horizon : bande d'herbe claire délavée (profondeur atmosphérique)
---   3. premier plan : damier de tuiles 16 px en 2 verts + touffes de
---      brins, fleurs et cailloux — texture vivante, jamais un aplat.
-MHH_SOL_H = 92           -- hauteur du sol jouable (px)
-MHH_HORIZON_H = 10        -- bande délavée entre collines et sol
--- Collines lointaines : deux bosses vertes pâles, derrière l'horizon
-do
-    local function colline(x, l, h, r, g, b)
-        local t = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-        t:SetSize(l, h)
-        t:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, MHH_SOL_H + MHH_HORIZON_H - 2)
-        t:SetColorTexture(r, g, b, 1)
-    end
-    colline(-30, 220, 26, 0.62, 0.72, 0.52)
-    colline(150, 260, 34, 0.55, 0.66, 0.45)
-    colline(380, 220, 22, 0.62, 0.72, 0.52)
-end
-MHH_enclosHorizon = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosHorizon:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, MHH_SOL_H)
-MHH_enclosHorizon:SetSize(532, MHH_HORIZON_H)
-MHH_enclosHorizon:SetColorTexture(0.72, 0.82, 0.55, 1)
-MHH_enclosSol = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosSol:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 0)
-MHH_enclosSol:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", 0, 0)
-MHH_enclosSol:SetHeight(MHH_SOL_H)
-MHH_enclosSol:SetColorTexture(0.42, 0.60, 0.30, 1)
--- Damier de tuiles : 2 verts proches alternés (16 px), colle au pixel
-do
-    local VERT_A, VERT_B = {0.42, 0.60, 0.30}, {0.41, 0.585, 0.29}
-    local rang, colonne = 0, 0
-    local y = 0
-    while y < MHH_SOL_H do
-        local x = 0
-        colonne = 0
-        while x < 532 do
-            local tuile = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-            tuile:SetSize(16, 16)
-            tuile:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, y)
-            local c = ((rang + colonne) % 2 == 0) and VERT_A or VERT_B
-            tuile:SetColorTexture(c[1], c[2], c[3], 1)
-            x = x + 16
-            colonne = colonne + 1
-        end
-        y = y + 16
-        rang = rang + 1
-    end
-end
--- Touffes d'herbe : brins fins en 2-3 px, plusieurs verts, denses.
--- Générateur déterministe maison (mulberry-like) : math.randomseed
--- n'existe pas sur ce client, et une disposition stable est voulue —
--- l'herbe ne doit pas « sauter » d'une ouverture à l'autre.
-do
-    local graine = 42
-    local function bruit()
-        graine = (graine * 1103515245 + 12345) % 2147483648
-        return graine / 2147483648
-    end
-    local function bruitEntier(min, max)
-        return min + math.floor(bruit() * (max - min + 1))
-    end
-    for i = 1, 70 do
-        local g = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-        local x = bruitEntier(0, 529)
-        local y = bruitEntier(2, MHH_SOL_H - 8)
-        local vert = 0.50 + bruit() * 0.20
-        g:SetSize(2, bruitEntier(4, 7))
-        g:SetColorTexture(vert * 0.80, vert, vert * 0.50, 1)
-        g:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, y)
-    end
-    -- Fleurs : points de couleur (coquelicot/bouton d'or) posés sur l'herbe
-    for i = 1, 6 do
-        local f = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-        f:SetSize(3, 3)
-        f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", bruitEntier(6, 522), bruitEntier(6, MHH_SOL_H - 10))
-        if bruitEntier(1, 2) == 1 then
-            f:SetColorTexture(0.95, 0.35, 0.30, 1)  -- coquelicot
-        else
-            f:SetColorTexture(0.98, 0.90, 0.45, 1)  -- bouton d'or
-        end
-    end
-    -- Cailloux gris posés ça et là
-    for i = 1, 4 do
-        local c = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-        c:SetSize(bruitEntier(4, 6), bruitEntier(2, 4))
-        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", bruitEntier(8, 520), bruitEntier(2, MHH_SOL_H - 6))
-        c:SetColorTexture(0.55, 0.52, 0.47, 1)
-    end
-    -- Chemin de terre clair qui traverse au tiers du sol
-    local chemin = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
-    chemin:SetSize(532, 7)
-    chemin:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 14)
-    chemin:SetColorTexture(0.62, 0.52, 0.38, 0.85)
-end
-MHH_enclosVide = MHH_enclosMenagerie:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_enclosVide:SetPoint("CENTER", 0, 46)
-MHH_enclosVide:SetText(L("|cffa58b54L'enclos est vide — le régisseur dort.|r"))
-
--- Clôture pixel art : piquets coiffés + deux lisses, au fond de l'herbe
--- (base des piquets au sol, lisses plus hautes — proportions de farm sim)
-do
-    local function lisse(y)
-        local t = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
-        t:SetSize(532, 3)
-        t:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, y)
-        t:SetColorTexture(0.55, 0.40, 0.22, 1)
-    end
-    lisse(66)
-    lisse(56)
-    local x = 6
-    while x < 528 do
-        local p = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
-        p:SetSize(4, 20)
-        p:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, 52)
-        p:SetColorTexture(0.66, 0.50, 0.30, 1)
-        local c = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
-        c:SetSize(6, 3) -- chapeau du piquet
-        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x - 1, 72)
-        c:SetColorTexture(0.50, 0.36, 0.20, 1)
-        -- ombre au pied du piquet : ancre la clôture dans l'herbe
-        local o = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
-        o:SetSize(8, 3)
-        o:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x - 2, 52)
-        o:SetColorTexture(0.22, 0.34, 0.16, 0.8)
-        x = x + 44
-    end
-end
--- Grange pixel art : posée SUR le sol, au fond à droite (base = horizon)
-do
-    local grange = CreateFrame("Frame", nil, MHH_enclosMenagerie)
-    grange:SetSize(88, 78)
-    grange:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -4, MHH_SOL_H + MHH_HORIZON_H - 8)
-    local function bloc(x, y, l, h, r, g, b, a)
-        local t = grange:CreateTexture(nil, "ARTWORK")
-        t:SetSize(l, h)
-        t:SetPoint("TOPLEFT", grange, "TOPLEFT", x, y)
-        t:SetColorTexture(r, g, b, a or 1)
-    end
-    -- Toit en escalier, faîte clair
-    bloc(10, 0, 68, 6, 0.42, 0.16, 0.12)
-    bloc(6, 6, 76, 7, 0.48, 0.20, 0.14)
-    bloc(2, 13, 84, 8, 0.55, 0.24, 0.16)
-    bloc(0, 21, 88, 2, 0.78, 0.74, 0.66)
-    -- Mur de planches + lignes plus sombres
-    bloc(8, 23, 72, 55, 0.72, 0.55, 0.34)
-    for i = 0, 7 do bloc(8, 28 + i * 6, 72, 1, 0.55, 0.40, 0.22, 0.6) end
-    -- Porte + fenêtres éclairées
-    bloc(36, 34, 16, 44, 0.35, 0.24, 0.14)
-    bloc(14, 32, 11, 9, 0.55, 0.78, 0.88, 0.95)
-    bloc(62, 32, 11, 9, 0.55, 0.78, 0.88, 0.95)
-    -- ombre portée de la grange sur l'herbe : la pose AU sol
-    bloc(2, 78, 84, 3, 0.22, 0.34, 0.16, 0.7)
 end
 
 -- Mini-météo de l'enclos : reprend la météo réelle du client (C_Weather,
@@ -6588,9 +6394,15 @@ local function ConfigurerMeteoEnclos(cle)
     end)
     MHH_enclosCiel:SetColorTexture(ciel[1] * facteur, ciel[2] * facteur,
         ciel[3] * facteur, ciel[4])
-    -- Les bandes du dégradé suivent la météo ET le cycle jour/nuit : la
-    -- couleur de base est celle de la météo, la variation verticale est
-    -- conservée (plus clair vers l'horizon) — nuits et tempêtes comprises.
+    -- FOND PEINT : l'image unique reçoit la teinte météo + cycle jour/nuit
+    -- (SetVertexColor multiplie : nuit = assombri, pluie = refroidi, le
+    -- pixel art reste lisible). Les replis procéduraux sont teintés pareil.
+    if MHH_enclosFondImg then
+        MHH_enclosFondImg:SetVertexColor(
+            0.55 + 0.45 * ciel[1] * facteur,
+            0.55 + 0.45 * ciel[2] * facteur,
+            0.55 + 0.45 * ciel[3] * facteur)
+    end
     for bi, bande in ipairs(MHH_enclosBandesCiel or {}) do
         local t = (bi - 0.5) / #MHH_enclosBandesCiel
         bande:SetColorTexture((ciel[1] + 0.16 * t) * facteur,

@@ -20,3 +20,9 @@ pixel intégrée). Régénérer un sprite : dessiner un PNG 32x32 transparent, p
 `magick sprite.png -depth 32 sprite.tga` (ou PIL `img.save("sprite.tga")`).
 Slugs : humar, takk, mazzranache, sarkoth, flagglemurk, naraxis, snarlflare,
 morladim, crocplat, crocolisque, regisseur, regisseur_dort.
+
+## Fond de l'enclos
+`Textures/enclos.tga` (532x166) : scène pixel-art complète — ciel dégradé,
+nuages, soleil, collines, arbre, herbe texturée, chemin, clôture, grange.
+Remplaçable par n'importe quelle image 532x166 (TGA RGBA). La météo et le
+cycle jour/nuit la teintent automatiquement.
