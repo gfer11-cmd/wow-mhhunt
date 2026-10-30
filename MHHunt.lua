@@ -2115,6 +2115,11 @@ local function FinChasseVictoire(nom)
     else
         DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffa0ff50Chasse réussie : ") .. nom .. " !|r (" .. info.kills .. L(" chasses") .. nomMeteoAnnonce .. ")")
     end
+    -- La musique de chasse s'arrête à la prise : sans cet arrêt explicite,
+    -- la piste de combat continuait jusqu'au relais suivant quand le kill
+    -- était validé PENDANT le combat (UNIT_DIED / viseur) — REGEN_ENABLED
+    -- ne la stoppait que si le joueur était déjà sorti du combat.
+    MHH_ArreterMusique()
     if DB.config.son and JouerJingleVictoire then JouerJingleVictoire() end
     -- Chronomètre : durée et record
     local duree = chasseDebutTemps and (time() - chasseDebutTemps) or nil
@@ -2172,22 +2177,19 @@ local function FinChasseVictoire(nom)
             -- (8e valeur ; via pcall la capture n = valeur n-1).
             sousClasseArme = sousClasseDe(GetInventoryItemLink and GetInventoryItemLink("player", 16))
                 or sousClasseDe(GetInventoryItemID and GetInventoryItemID("player", 16))
-            -- Repli nom : sur ce client, le cache d'objet peut être VIDE au
-            -- lien/id (GetItemInfo renvoie nil) alors que GetItemInfo est
-            -- utilisable via le NOM de l'objet en main. Sans ce repli, la
-            -- prise n'alimentait JAMAIS l'histogramme des armes.
-            if not sousClasseArme and GetItemInfo then
-                local nomArme = (GetItemInfo and GetInventoryItemLink and GetInventoryItemLink("player", 16) or ""):match("%[(.-)%]")
-                if not nomArme then
-                    -- Dernier repli : tooltip de l'objet en main droite
-                    if GameTooltip then
-                        GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-                        GameTooltip:SetInventoryItem("player", 16)
-                        nomArme = GameTooltip:IsShown() and (GameTooltipTextLeft1 and GameTooltipTextLeft1:GetText() or nil)
-                        GameTooltip:Hide()
-                    end
-                end
-                if nomArme then sousClasseArme = sousClasseDe(nomArme) end
+            -- Source 2 : le TOOLTIP de l'objet en main droite. Sur ce
+            -- client le cache d'objet renvoyé par GetItemInfo est souvent
+            -- VIDE (nil sur lien ET id), alors que le tooltip, lui, rend
+            -- toujours les lignes réelles. La 2e ligne du tooltip est la
+            -- sous-classe (« Haches », « Épées »… en client FR) — c'est
+            -- la valeur exacte que l'histogramme veut compter.
+            if not sousClasseArme and GameTooltip then
+                GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+                GameTooltip:ClearLines()
+                GameTooltip:SetInventoryItem("player", 16)
+                local libelle = GameTooltipTextLeft2 and GameTooltipTextLeft2:GetText()
+                GameTooltip:Hide()
+                if libelle and libelle ~= "" then sousClasseArme = libelle end
             end
         end)
         DB.armes = DB.armes or {}
@@ -4189,7 +4191,7 @@ end
 
 -- Fiche détail (panneau droit)
 local detailFond = CreateFrame("Frame", nil, pageMonstres, MHH_TEMPLATE_BACKDROP)
-detailFond:SetPoint("TOPRIGHT", pageMonstres, "TOPRIGHT", -44, -48)
+detailFond:SetPoint("TOPRIGHT", pageMonstres, "TOPRIGHT", -44, -44)
 detailFond:SetSize(288, 316)
 -- Panneau encadré : distingue la fiche du parchemin (façon MH)
 pcall(function()
@@ -4907,7 +4909,7 @@ end -- fin bloc page Gibier
 do
 local contratsFond = CreateFrame("Frame", nil, pageContrats, MHH_TEMPLATE_BACKDROP)
 contratsFond:SetPoint("TOPLEFT", pageContrats, "TOPLEFT", 44, -42)
-contratsFond:SetSize(552, 336)
+contratsFond:SetSize(552, 314)
 pcall(function()
     contratsFond:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -4924,14 +4926,14 @@ local function ContratsLabel(x, y, texte)
     l:SetText("|cffffd100" .. texte .. "|r")
     return l
 end
-ContratsLabel(20, -16, L("OFFRE DU JOUR"))
+ContratsLabel(20, -14, L("OFFRE DU JOUR"))
 -- Séparateur : distingue l'offre spéciale (cible du jour) des contrats
 -- d'appoint en dessous — hiérarchie visuelle façon panneau de guilde MH
 local offresSep = contratsFond:CreateTexture(nil, "OVERLAY")
 offresSep:SetSize(512, 2)
 offresSep:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 20, -58)
 offresSep:SetColorTexture(0.62, 0.48, 0.22, 0.7)
-ContratsLabel(20, -66, L("CONTRATS DE LA GUILDE"))
+ContratsLabel(20, -68, L("CONTRATS DE LA GUILDE"))
 -- Prise d'un contrat depuis une offre du jour : cible du jour = +20,
 -- autres offres = +10. Flux unique (l'ancien bouton « Prendre » de la
 -- cible du jour) : message + rugissement, EN CHASSE si déjà ciblée,
@@ -4965,8 +4967,9 @@ local offresLignes = {}
 for i = 1, 5 do
     -- Ligne 1 = offre spéciale, sous « OFFRE DU JOUR ». Les 4 contrats
     -- d'appoint vivent sous « CONTRATS DE LA GUILDE », d'où le décalage.
-    local y = (i == 1) and -34 or (-84 - (i - 2) * 24)
+    local y = (i == 1) and -32 or (-88 - (i - 2) * 24)
     local l = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    -- Centre du texte = centre du bouton : l'alignement vertical est net
     l:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, y + 2)
     l:SetWidth(360)
     l:SetJustifyH("LEFT")
@@ -4995,9 +4998,9 @@ for i = 1, 5 do
     end)
     offresLignes[i] = { txt = l, btn = b }
 end
-ContratsLabel(20, -186, L("CONTRAT ACTIF"))
+ContratsLabel(20, -192, L("CONTRAT ACTIF"))
 local contratsActifTxt = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-contratsActifTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -204)
+contratsActifTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -210)
 contratsActifTxt:SetWidth(330)
 contratsActifTxt:SetJustifyH("LEFT")
 contratsActifTxt:SetShadowColor(0, 0, 0, 1)
@@ -5005,7 +5008,7 @@ contratsActifTxt:SetShadowOffset(1, -1)
 -- Révoquer : abandonne le contrat en cours (la chasse, elle, continue)
 local boutonRevoquer = CreateFrame("Button", nil, contratsFond, MHH_TEMPLATE_BACKDROP)
 -- Ancré sous le bouton « Prendre / En cours » : centres alignés, empilement net
-boutonRevoquer:SetPoint("TOPRIGHT", contratsFond, "TOPRIGHT", -16, -204)
+boutonRevoquer:SetPoint("TOPRIGHT", contratsFond, "TOPRIGHT", -16, -210)
 boutonRevoquer:SetSize(96, 22)
 boutonRevoquer:SetText(L("Révoquer"))
 boutonRevoquer:SetNormalFontObject("GameFontHighlight")
@@ -5043,9 +5046,9 @@ boutonRevoquer:SetScript("OnClick", function()
     RaffraichirContrats()
     MettreAJourIndicateur()
 end)
-ContratsLabel(20, -228, L("HISTORIQUE DES PRIMES"))
+ContratsLabel(20, -236, L("HISTORIQUE DES PRIMES"))
 local contratsHistoTxt = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-contratsHistoTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -246)
+contratsHistoTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -254)
 contratsHistoTxt:SetWidth(500)
 contratsHistoTxt:SetJustifyH("LEFT")
 contratsHistoTxt:SetSpacing(2)
@@ -5087,14 +5090,14 @@ RaffraichirContrats = function()
         contratsActifTxt:SetText(L("|cff8a6d3bAucun contrat en cours — prenez une offre du jour ci-dessus.|r"))
         boutonRevoquer:Disable()
     end
-    -- Historique des primes (4 dernières — la page est plus dense)
+    -- Historique des primes (3 dernières — le cadre est plus compact)
     local histo = DB.contratHistorique or {}
     if #histo == 0 then
         contratsHistoTxt:SetText(L("|cff8a6d3bAucune prime à ce jour.|r\n|cffa58b54Primes gagnées au total : |cffffd100")
             .. (DB.primesGagnees or 0) .. L(" points|r\n|cffa58b54Nouvelles offres à minuit.|r"))
     else
         local lignes = {}
-        for i = 1, math.min(#histo, 4) do
+        for i = 1, math.min(#histo, 3) do
             lignes[#lignes + 1] = "|cffffff00" .. histo[i].nom .. "|r"
                 .. (histo[i].date and ("  —  " .. histo[i].date) or "")
                 .. "  |cffa0ff50(+" .. (histo[i].prime or 20) .. " points)|r"
