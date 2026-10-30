@@ -2129,13 +2129,13 @@ end
 -- Libellés COURTS (affichés horizontalement sous chaque colonne — pas de
 -- rotation en Vanilla, les noms complets ne tiendraient pas)
 MHH_TYPES_ARMES_COURT = {
-    ["Dagues"] = "Dagues", ["Epées"] = "Epées",
-    ["Epées à deux mains"] = "Epées 2M", ["Masses"] = "Masses",
-    ["Masses à deux mains"] = "Masses 2M", ["Haches"] = "Haches",
-    ["Haches à deux mains"] = "Haches 2M", ["Armes de pugilat"] = "Pugilat",
-    ["Armes d'hast"] = "Hast", ["Arcs"] = "Arcs",
-    ["Arbalètes"] = "Arb.", ["Bâtons"] = "Bâtons",
-    ["Baguettes"] = "Bagu.", ["Armes à feu"] = "Fusils",
+    ["Dagues"] = "Dague", ["Epées"] = "Epée",
+    ["Epées à deux mains"] = "Epée2M", ["Masses"] = "Masse",
+    ["Masses à deux mains"] = "Masse2M", ["Haches"] = "Hache",
+    ["Haches à deux mains"] = "Hache2M", ["Armes de pugilat"] = "Poing",
+    ["Armes d'hast"] = "Hast", ["Arcs"] = "Arc",
+    ["Arbalètes"] = "Arb", ["Bâtons"] = "Bâton",
+    ["Baguettes"] = "Bagu", ["Armes à feu"] = "Fusil",
 }
 -- Normalisation : le client FR écrit parfois « Epées » ou « Épées » (accent),
 -- et le tooltip peut coller la classe de l'arme en majuscules.
@@ -5886,22 +5886,19 @@ function MHH_RaffraichirArmesHistogramme()
         barre.count:ClearAllPoints()
         barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx, axe + h + 1)
         barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff7777770|r")
-        -- LIBELLÉ VERTICAL DIAGONAL : une lettre par ligne, décalée d'un
-        -- espace à chaque étage (astuce Vanilla). Commence sous l'axe et
-        -- descend vers le bas du panneau.
+        -- LIBELLÉ VERTICAL SIMPLE : une lettre par ligne, centré sous
+        -- l'axe (pas d'icône par type en Vanilla : Pugilat/Hast/Arbalète/
+        -- Baguette n'en ont pas — texte vertical seul, singulier, court)
         local court = MHH_TYPES_ARMES_COURT[canon] or canon
         local lignes = {}
         for li = 1, #court do
             local c = court:sub(li, li)
-            if c ~= " " then
-                lignes[#lignes + 1] = string.rep(" ", li - 1) .. c
-            end
+            if c ~= " " then lignes[#lignes + 1] = c end
         end
         barre.txt:ClearAllPoints()
-        -- ancré au point d'axe de la colonne, le texte descend sous l'axe
-        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx - 3, axe - 1)
-        barre.txt:SetWidth(60)
-        barre.txt:SetJustifyH("LEFT")
+        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx, axe - 1)
+        barre.txt:SetWidth(colW + 2)
+        barre.txt:SetJustifyH("CENTER")
         barre.txt:SetText("|cffd8c9a3" .. table.concat(lignes, "\n") .. "|r")
     end
 end
@@ -6158,11 +6155,10 @@ profilStats:SetTextColor(1, 1, 1)
 profilStats:SetSpacing(4)
 
 RaffraichirProfil = function()
-    -- Histogramme des armes : affiché d'office à l'ouverture de l'onglet
-    -- (le bouton icône de classe, 22 px sans texture propre, passait pour
-    -- inactif — il reste cliquable pour le replier/déplier).
+    -- Histogramme des armes : rafraîchi mais PAS rouvert d'office — il ne
+    -- s'ouvre QUE sur clic du bouton (l'icône de classe) et se referme à
+    -- chaque sortie d'onglet ; les stats restent visibles par défaut.
     MHH_RaffraichirArmesHistogramme()
-    MHH_armesPan:Show()
     -- Photo du chasseur (portrait live)
     DefinirPortrait(profilPortrait.tex, "player")
     local total = nbChasses()
@@ -6436,6 +6432,12 @@ for i, rid in ipairs(ordreRecettes) do
     local bt = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     bt:SetPoint("CENTER")
     bt:SetText("|cffffd100Cuisiner|r")
+    -- Surbrillance pleine taille au survol (réclamée : le bouton doit
+    -- inviter au clic)
+    local survol = b:CreateTexture(nil, "HIGHLIGHT")
+    survol:SetAllPoints()
+    survol:SetColorTexture(1, 0.82, 0.35, 0.30)
+    b:SetHighlightTexture(survol)
     b:SetScript("OnClick", function()
         if not DB then return end
         local rec = CUISINE_RECETTES[rid]
@@ -6474,7 +6476,21 @@ RaffraichirCuisine = function()
             if (DB[ing] or 0) < qte then ok = false end
         end
         cuisineCouts[i]:SetText(L("|cffc9a24aIngrédients :|r ") .. table.concat(coutsTxt, ", "))
-        if ok then cuisineBoutons[i]:Enable() else cuisineBoutons[i]:Disable() end
+        -- Grisage complet quand il manque des composants : le bouton est
+        -- désactivé (Vanilla le fige) ET son libellé passe au gris
+        if ok then
+            cuisineBoutons[i]:Enable()
+            pcall(function()
+                cuisineBoutons[i]:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
+                cuisineBoutons[i]:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
+            end)
+        else
+            cuisineBoutons[i]:Disable()
+            pcall(function()
+                cuisineBoutons[i]:SetBackdropColor(0.15, 0.13, 0.10, 0.75)
+                cuisineBoutons[i]:SetBackdropBorderColor(0.30, 0.28, 0.25, 0.8)
+            end)
+        end
     end
 end
 end
