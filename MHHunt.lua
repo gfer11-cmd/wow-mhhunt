@@ -6853,7 +6853,7 @@ local function BoucleMenagerie()
                 -- il boude : coin de l'enclos, tout pâle, immobile
                 s.f:SetAlpha(0.35)
                 s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8, 12)
-                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8 + 7, 10)
+                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8 + s.f:GetWidth() / 2 - 33, 10)
                 s.ombre:Show()
                 if s.f.pa then s.f.pa:Show() s.f.pb:Hide() end
                 if s.f.tgaA then s.f.tgaA:Show() end
