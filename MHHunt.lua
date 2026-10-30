@@ -364,8 +364,8 @@ MH_TEXTES = {
         [" points)"] = " points)",
         [" points|r |cffc9a24a("] = " points|r |cffc9a24a(",
         [" points|r\n|cffa58b54Prochaine cible du jour : à minuit.|r"] = " points|r\n|cffa58b54Next target of the day: at midnight.|r",
-        [" points|r\n|cffa58b54Nouvelles offres à minuit.|r"] = " points|r\n|cffa58b54New offers at midnight.|r",
-        [" contrat(s) rempli(s)|r\n|cffa58b54Nouvelles offres à minuit.|r"] = " contrat(s) rempli(s)|r\n|cffa58b54New offers at midnight.|r",
+        [" points — nouvelles offres à minuit.|r"] = " points — new offers at midnight.|r",
+        [" contrat(s) rempli(s) — nouvelles offres à minuit.|r"] = " contract(s) fulfilled — new offers at midnight.|r",
         [" prises au compteur."] = " kills on the counter.",
         [" prises, et toujours des restes à gratter."] = " kills, and always scraps to pick at.",
         [" rejoint l'enclos (Ménagerie)."] = " joins the pen (Menagerie).",
@@ -4969,8 +4969,9 @@ for i = 1, 5 do
     -- d'appoint vivent sous « CONTRATS DE LA GUILDE », d'où le décalage.
     local y = (i == 1) and -32 or (-88 - (i - 2) * 24)
     local l = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    -- Centre du texte = centre du bouton : l'alignement vertical est net
-    l:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, y + 2)
+    -- Centre vertical du texte = centre du bouton (20 px) : le texte
+    -- (~12 px) est ancré à y+4, alignement net à chaque ligne.
+    l:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, y + 4)
     l:SetWidth(360)
     l:SetJustifyH("LEFT")
     l:SetShadowColor(0, 0, 0, 1)
@@ -5046,9 +5047,9 @@ boutonRevoquer:SetScript("OnClick", function()
     RaffraichirContrats()
     MettreAJourIndicateur()
 end)
-ContratsLabel(20, -236, L("HISTORIQUE DES PRIMES"))
+ContratsLabel(20, -246, L("HISTORIQUE DES PRIMES"))
 local contratsHistoTxt = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-contratsHistoTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -254)
+contratsHistoTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -262)
 contratsHistoTxt:SetWidth(500)
 contratsHistoTxt:SetJustifyH("LEFT")
 contratsHistoTxt:SetSpacing(2)
@@ -5094,7 +5095,7 @@ RaffraichirContrats = function()
     local histo = DB.contratHistorique or {}
     if #histo == 0 then
         contratsHistoTxt:SetText(L("|cff8a6d3bAucune prime à ce jour.|r\n|cffa58b54Primes gagnées au total : |cffffd100")
-            .. (DB.primesGagnees or 0) .. L(" points|r\n|cffa58b54Nouvelles offres à minuit.|r"))
+            .. (DB.primesGagnees or 0) .. L(" points — nouvelles offres à minuit.|r"))
     else
         local lignes = {}
         for i = 1, math.min(#histo, 3) do
@@ -5104,7 +5105,7 @@ RaffraichirContrats = function()
         end
         contratsHistoTxt:SetText(table.concat(lignes, "\n")
             .. L("\n|cffa58b54Primes gagnées au total : |cffffd100") .. (DB.primesGagnees or 0) .. L(" points — ")
-            .. #histo .. L(" contrat(s) rempli(s)|r\n|cffa58b54Nouvelles offres à minuit.|r"))
+            .. #histo .. L(" contrat(s) rempli(s) — nouvelles offres à minuit.|r"))
     end
 end
 end -- fin bloc page Contrats
@@ -6329,7 +6330,24 @@ MHH_enclosMenagerie:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 10, -32)
 MHH_enclosMenagerie:SetSize(532, 166)
 MHH_enclosCiel = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
 MHH_enclosCiel:SetAllPoints()
-MHH_enclosCiel:SetColorTexture(0.55, 0.72, 0.92, 0.98)
+-- Dégradé vertical façon farm sim : 8 bandes du zénith au sol, du plus
+-- saturé au plus clair — un ciel plat tuait toute la profondeur.
+MHH_enclosBandesCiel = {}
+do
+    local HAUT = 166
+    local NB = 8
+    for b = 1, NB do
+        local t = (b - 0.5) / NB
+        local bande = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
+        bande:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", 0, -math.floor(HAUT * (b - 1) / NB))
+        bande:SetSize(532, math.ceil(HAUT / NB) + 1)
+        bande:SetColorTexture(0.47 + 0.16 * t, 0.66 + 0.12 * t, 0.92 - 0.05 * t, 0.98)
+        MHH_enclosBandesCiel[#MHH_enclosBandesCiel + 1] = bande
+    end
+end
+-- (MHH_enclosCiel reste le fond de repli pour la teinte météo : il est
+-- dessous, quasi totalement recouvert par les bandes en temps normal.)
+
 -- Décor céleste : soleil, nuages, oiseaux — dessinés APRÈS le ciel pour
 -- passer au-dessus, en pixel art cohérent avec la grange et la clôture.
 -- Les nuages sont mémorisés : ConfigurerMeteoEnclos les re-teinte avec le
@@ -6373,50 +6391,98 @@ do
         aile:SetColorTexture(0.25, 0.28, 0.33, 0.8)
     end
 end
--- Bande d'horizon plus claire (profondeur, façon RPG-maker)
+-- SOL FAÇON STARDREW : l'herbe occupe la moitié basse de la scène (pas
+-- une bande de 38 px noyée dans le ciel). Trois couches :
+--   1. lointain : collines douces au-dessus de l'horizon
+--   2. horizon : bande d'herbe claire délavée (profondeur atmosphérique)
+--   3. premier plan : damier de tuiles 16 px en 2 verts + touffes de
+--      brins, fleurs et cailloux — texture vivante, jamais un aplat.
+MHH_SOL_H = 92           -- hauteur du sol jouable (px)
+MHH_HORIZON_H = 10        -- bande délavée entre collines et sol
+-- Collines lointaines : deux bosses vertes pâles, derrière l'horizon
+do
+    local function colline(x, l, h, r, g, b)
+        local t = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
+        t:SetSize(l, h)
+        t:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, MHH_SOL_H + MHH_HORIZON_H - 2)
+        t:SetColorTexture(r, g, b, 1)
+    end
+    colline(-30, 220, 26, 0.62, 0.72, 0.52)
+    colline(150, 260, 34, 0.55, 0.66, 0.45)
+    colline(380, 220, 22, 0.62, 0.72, 0.52)
+end
 MHH_enclosHorizon = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosHorizon:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 38)
-MHH_enclosHorizon:SetSize(532, 26)
-MHH_enclosHorizon:SetColorTexture(0.78, 0.85, 0.90, 0.55)
+MHH_enclosHorizon:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, MHH_SOL_H)
+MHH_enclosHorizon:SetSize(532, MHH_HORIZON_H)
+MHH_enclosHorizon:SetColorTexture(0.72, 0.82, 0.55, 1)
 MHH_enclosSol = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
 MHH_enclosSol:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 0)
 MHH_enclosSol:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", 0, 0)
-MHH_enclosSol:SetHeight(38)
-MHH_enclosSol:SetColorTexture(0.30, 0.42, 0.24, 1)
--- Liseré d'herbe en haut de la bande de terre
-MHH_enclosBordSol = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosBordSol:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 36)
-MHH_enclosBordSol:SetSize(532, 3)
-MHH_enclosBordSol:SetColorTexture(0.45, 0.58, 0.30, 1)
-MHH_enclosVide = MHH_enclosMenagerie:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_enclosVide:SetPoint("CENTER", 0, 40)
-MHH_enclosVide:SetText(L("|cffa58b54L'enclos est vide — le régisseur dort.|r"))
-
--- Déco de sol façon RPG-maker : touffes d'herbe qui dépassent de la
--- bande de terre, quelques cailloux, un petit chemin plus clair.
--- Dessiné une fois, aucune image externe.
+MHH_enclosSol:SetHeight(MHH_SOL_H)
+MHH_enclosSol:SetColorTexture(0.42, 0.60, 0.30, 1)
+-- Damier de tuiles : 2 verts proches alternés (16 px), colle au pixel
 do
-    for i = 1, 22 do
-        local g = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-        local x = math.random() * (532 - 10)
-        if math.random(3) == 1 then
-            g:SetSize(math.random(4, 7), math.random(2, 4))
-            g:SetColorTexture(0.52, 0.48, 0.42, 0.9)
-            g:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, 1 + math.random(0, 3))
+    local VERT_A, VERT_B = {0.42, 0.60, 0.30}, {0.41, 0.585, 0.29}
+    local rang, colonne = 0, 0
+    local y = 0
+    while y < MHH_SOL_H do
+        local x = 0
+        colonne = 0
+        while x < 532 do
+            local tuile = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
+            tuile:SetSize(16, 16)
+            tuile:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, y)
+            local c = ((rang + colonne) % 2 == 0) and VERT_A or VERT_B
+            tuile:SetColorTexture(c[1], c[2], c[3], 1)
+            x = x + 16
+            colonne = colonne + 1
+        end
+        y = y + 16
+        rang = rang + 1
+    end
+end
+-- Touffes d'herbe : brins fins en 2-3 px, plusieurs verts, denses
+do
+    math.randomseed(42) -- disposition stable à chaque ouverture
+    for i = 1, 70 do
+        local g = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
+        local x = math.random(0, 529)
+        local y = math.random(2, MHH_SOL_H - 8)
+        local vert = 0.50 + math.random() * 0.20
+        g:SetSize(2, math.random(4, 7))
+        g:SetColorTexture(vert * 0.80, vert, vert * 0.50, 1)
+        g:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, y)
+    end
+    -- Fleurs : 5 points de couleur (coquelicot/blé) posés sur l'herbe
+    for i = 1, 6 do
+        local f = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
+        f:SetSize(3, 3)
+        f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", math.random(6, 522), math.random(6, MHH_SOL_H - 10))
+        if math.random(2) == 1 then
+            f:SetColorTexture(0.95, 0.35, 0.30, 1)  -- coquelicot
         else
-            g:SetSize(3, math.random(4, 9))
-            local vert = 0.42 + math.random() * 0.18
-            g:SetColorTexture(vert * 0.85, vert, vert * 0.55, 0.95)
-            g:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, 27)
+            f:SetColorTexture(0.98, 0.90, 0.45, 1)  -- bouton d'or
         end
     end
-    -- Chemin de terre clair au milieu de la bande
-    local chemin = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-    chemin:SetSize(532, 8)
-    chemin:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 10)
-    chemin:SetColorTexture(0.48, 0.40, 0.30, 0.55)
+    -- Cailloux gris posés ça et là
+    for i = 1, 4 do
+        local c = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
+        c:SetSize(math.random(4, 6), math.random(2, 4))
+        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", math.random(8, 520), math.random(2, MHH_SOL_H - 6))
+        c:SetColorTexture(0.55, 0.52, 0.47, 1)
+    end
+    -- Chemin de terre clair qui traverse au tiers du sol
+    local chemin = MHH_enclosMenagerie:CreateTexture(nil, "BORDER")
+    chemin:SetSize(532, 7)
+    chemin:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 14)
+    chemin:SetColorTexture(0.62, 0.52, 0.38, 0.85)
 end
--- Clôture pixel art : piquets coiffés + deux lisses, toute la largeur
+MHH_enclosVide = MHH_enclosMenagerie:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+MHH_enclosVide:SetPoint("CENTER", 0, 46)
+MHH_enclosVide:SetText(L("|cffa58b54L'enclos est vide — le régisseur dort.|r"))
+
+-- Clôture pixel art : piquets coiffés + deux lisses, au fond de l'herbe
+-- (base des piquets au sol, lisses plus hautes — proportions de farm sim)
 do
     local function lisse(y)
         local t = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
@@ -6424,27 +6490,31 @@ do
         t:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, y)
         t:SetColorTexture(0.55, 0.40, 0.22, 1)
     end
-    lisse(30)
-    lisse(20)
+    lisse(66)
+    lisse(56)
     local x = 6
     while x < 528 do
         local p = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
-        p:SetSize(4, 18)
-        p:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, 16)
+        p:SetSize(4, 20)
+        p:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x, 52)
         p:SetColorTexture(0.66, 0.50, 0.30, 1)
         local c = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
         c:SetSize(6, 3) -- chapeau du piquet
-        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x - 1, 34)
+        c:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x - 1, 72)
         c:SetColorTexture(0.50, 0.36, 0.20, 1)
+        -- ombre au pied du piquet : ancre la clôture dans l'herbe
+        local o = MHH_enclosMenagerie:CreateTexture(nil, "ARTWORK")
+        o:SetSize(8, 3)
+        o:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", x - 2, 52)
+        o:SetColorTexture(0.22, 0.34, 0.16, 0.8)
         x = x + 44
     end
 end
--- Grange pixel art : au fond à droite, derrière le régisseur (qui
--- passe devant, prévu)
+-- Grange pixel art : posée SUR le sol, au fond à droite (base = horizon)
 do
     local grange = CreateFrame("Frame", nil, MHH_enclosMenagerie)
     grange:SetSize(88, 78)
-    grange:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -4, 38)
+    grange:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -4, MHH_SOL_H + MHH_HORIZON_H - 8)
     local function bloc(x, y, l, h, r, g, b, a)
         local t = grange:CreateTexture(nil, "ARTWORK")
         t:SetSize(l, h)
@@ -6463,6 +6533,8 @@ do
     bloc(36, 34, 16, 44, 0.35, 0.24, 0.14)
     bloc(14, 32, 11, 9, 0.55, 0.78, 0.88, 0.95)
     bloc(62, 32, 11, 9, 0.55, 0.78, 0.88, 0.95)
+    -- ombre portée de la grange sur l'herbe : la pose AU sol
+    bloc(2, 78, 84, 3, 0.22, 0.34, 0.16, 0.7)
 end
 
 -- Mini-météo de l'enclos : reprend la météo réelle du client (C_Weather,
@@ -6506,6 +6578,15 @@ local function ConfigurerMeteoEnclos(cle)
     end)
     MHH_enclosCiel:SetColorTexture(ciel[1] * facteur, ciel[2] * facteur,
         ciel[3] * facteur, ciel[4])
+    -- Les bandes du dégradé suivent la météo ET le cycle jour/nuit : la
+    -- couleur de base est celle de la météo, la variation verticale est
+    -- conservée (plus clair vers l'horizon) — nuits et tempêtes comprises.
+    for bi, bande in ipairs(MHH_enclosBandesCiel or {}) do
+        local t = (bi - 0.5) / #MHH_enclosBandesCiel
+        bande:SetColorTexture((ciel[1] + 0.16 * t) * facteur,
+            (ciel[2] + 0.12 * t) * facteur,
+            (ciel[3] - 0.05 * t) * facteur, ciel[4])
+    end
     -- Le décor céleste suit la lumière : nuances sombres la nuit, blanches
     -- le jour — sinon le soleil brillait en plein noir.
     for _, nuage in ipairs(MHH_enclosNuages) do
@@ -6668,7 +6749,7 @@ MHH_REGISSEUR = {
 MHH_regisseurFrame = nil
 pcall(function()
     MHH_regisseurFrame = CreerSpriteMenagerie(nil, MHH_REGISSEUR)
-    MHH_regisseurFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 28)
+    MHH_regisseurFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10)
 end)
 -- Quand l'enclos est vide, le régisseur se la coule douce : boule
 -- roulée, yeux fermés, petit « zz » qui flotte
@@ -6697,7 +6778,7 @@ MHH_REGISSEUR_DORT = {
 MHH_regisseurDortFrame = nil
 pcall(function()
     MHH_regisseurDortFrame = CreerSpriteMenagerie(nil, MHH_REGISSEUR_DORT)
-    MHH_regisseurDortFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 28)
+    MHH_regisseurDortFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10)
     MHH_regisseurDortFrame:Hide()
 end)
 
@@ -6761,8 +6842,8 @@ local function BoucleMenagerie()
             if etat == "affame" then
                 -- il boude : coin de l'enclos, tout pâle, immobile
                 s.f:SetAlpha(0.35)
-                s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8, 30)
-                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8 + 7, 28)
+                s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8, 12)
+                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8 + 7, 10)
                 s.ombre:Show()
                 if s.f.pa then s.f.pa:Show() s.f.pb:Hide() end
                 if s.f.tgaA then s.f.tgaA:Show() end
@@ -6777,11 +6858,11 @@ local function BoucleMenagerie()
                 local amp, freq = 3, 3
                 if gate then amp, freq = 9, 7 end
                 local bob = math.abs(math.sin(GetTime() * freq + s.phase)) * amp
-                s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", s.x, 30 + bob)
+                s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", s.x, 12 + bob)
                 -- l'ombre s'aplatit quand la bête saute : ancre le mouvement
                 local omScale = 1 - bob * 0.045
                 s.ombre:SetSize((16 * MHH_TAILLE_PIX - 14) * omScale, 7 * omScale)
-                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", s.x + 7, 28)
+                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", s.x + 7, 10)
                 -- Animation 2 frames : la posture alterne à la cadence de
                 -- la marche (debout / posée). Un pensionnaire gâté trottine.
                 local phase = math.floor(GetTime() * (gate and 8 or 4) + s.phase) % 2
@@ -6801,12 +6882,12 @@ local function BoucleMenagerie()
     if MHH_regisseurFrame and MHH_regisseurFrame:IsShown() then
         local b = math.sin(GetTime() * 1.2) * 1.5
         MHH_regisseurFrame:ClearAllPoints()
-        MHH_regisseurFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 28 + b)
+        MHH_regisseurFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10 + b)
     end
     if MHH_regisseurDortFrame and MHH_regisseurDortFrame:IsShown() then
         local b = math.sin(GetTime() * 0.8)
         MHH_regisseurDortFrame:ClearAllPoints()
-        MHH_regisseurDortFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 28 + b)
+        MHH_regisseurDortFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10 + b)
     end
 end
 local function DemarrerMenagerie()
