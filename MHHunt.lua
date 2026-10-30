@@ -2095,6 +2095,37 @@ MHH_TYPES_ARMES = {
     "Haches", "Haches à deux mains", "Armes de pugilat", "Armes d'hast",
     "Arcs", "Arbalètes", "Bâtons", "Baguettes", "Armes à feu",
 }
+-- ARMES PAR CLASSE (compétences d'armes Vanilla) : l'histogramme ne montre
+-- que les types EFFECTIVEMENT utilisables par la classe du chasseur — un
+-- voleur n'a pas de fusil ni de hallebarde, inutile de les afficher.
+MHH_ARMES_PAR_CLASSE = {
+    WARRIOR = { "Dagues", "Epées", "Epées à deux mains", "Masses", "Masses à deux mains",
+                "Haches", "Haches à deux mains", "Armes de pugilat", "Armes d'hast", "Arcs", "Armes à feu" },
+    PALADIN = { "Masses", "Masses à deux mains", "Epées", "Epées à deux mains",
+                "Haches", "Haches à deux mains", "Armes d'hast" },
+    HUNTER = { "Arcs", "Arbalètes", "Armes à feu", "Haches", "Haches à deux mains",
+                "Epées", "Epées à deux mains", "Armes de pugilat", "Dagues", "Armes d'hast" },
+    ROGUE = { "Dagues", "Epées", "Masses", "Armes de pugilat", "Arbalètes", "Armes à feu", "Arcs" },
+    PRIEST = { "Baguettes", "Masses", "Dagues" },
+    SHAMAN = { "Masses", "Masses à deux mains", "Haches", "Haches à deux mains",
+                "Dagues", "Armes de pugilat", "Bâtons" },
+    MAGE = { "Baguettes", "Bâtons", "Epées", "Dagues" },
+    WARLOCK = { "Baguettes", "Epées", "Dagues", "Bâtons" },
+    DRUID = { "Dagues", "Masses", "Masses à deux mains", "Bâtons", "Armes de pugilat", "Epées à deux mains" },
+}
+-- Types d'armes affichés pour CE chasseur (sa classe ; repli : tout)
+MHH_TYPES_ARMES_JOUEUR = nil
+local function MHH_TypesArmesJoueur()
+    if MHH_TYPES_ARMES_JOUEUR then return MHH_TYPES_ARMES_JOUEUR end
+    local liste = nil
+    pcall(function()
+        local _, token = UnitClass("player")
+        liste = MHH_ARMES_PAR_CLASSE[(token or ""):upper()]
+    end)
+    MHH_TYPES_ARMES_JOUEUR = liste or MHH_TYPES_ARMES
+    return MHH_TYPES_ARMES_JOUEUR
+end
+
 -- Libellés COURTS (affichés horizontalement sous chaque colonne — pas de
 -- rotation en Vanilla, les noms complets ne tiendraient pas)
 MHH_TYPES_ARMES_COURT = {
@@ -4951,12 +4982,14 @@ local function RaffraichirGrille()
         -- Noms de zone longs (« Contreforts de Hautebrande »…) : on repart
         -- de la grande police, on mesure, puis on rétrograde / tronque
         -- pour ne JAMAIS chevaucher le décompte X/Y calé à droite
+        local nomTronque = false
         pcall(function()
             entete.texte:SetFontObject("GameFontNormalLarge")
             local nomz = z
             local maxW = 176 -- 240 - 20 (pastille) - 44 (ratio à droite)
             entete.texte:SetText("|cffffd100" .. nomz .. "|r")
             if entete.texte:GetStringWidth() > maxW then
+                nomTronque = true
                 entete.texte:SetFontObject("GameFontNormal")
                 while entete.texte:GetStringWidth() > maxW and #nomz > 6 do
                     nomz = string.sub(nomz, 1, #nomz - 1)
@@ -4967,7 +5000,13 @@ local function RaffraichirGrille()
         -- Ratio ultra-compact « fiches/total » : juste les chiffres —
         -- les noms de zone longs (Hautes-terres d'Arathi…) ne le touchent plus
         local total = #parZone[z] + (MHH_RARES_ESTIMES[z] or 0)
-        entete.estim:SetText(total > 0 and ("|cffa58b54" .. #parZone[z] .. "/" .. total .. "|r") or "")
+        -- Nom de zone trop long : le décompte X/Y ne rentre PAS à côté du
+        -- titre — on le retire plutôt que de le juxtaposer (choix du joueur)
+        if nomTronque then
+            entete.estim:SetText("")
+        else
+            entete.estim:SetText(total > 0 and ("|cffa58b54" .. #parZone[z] .. "/" .. total .. "|r") or "")
+        end
         entete:Show()
         y = y + 26
         col = 0
@@ -5808,12 +5847,17 @@ function MHH_RaffraichirArmesHistogramme()
     local total = 0
     for _, n in pairs(comptes) do total = total + n end
     MHH_armesVide:SetShown(total == 0)
-    local nbCol = 7                      -- colonnes par rangée
+    -- Types de la CLASSE du chasseur ; les colonnes se répartissent sur
+    -- 2 rangées équilibrées (4-6 par rangée selon la classe)
+    local types = MHH_TypesArmesJoueur()
+    local nbTypes = #types
+    local nbCol = math.ceil(nbTypes / 2)
+    if nbCol < 4 then nbCol = nbTypes end  -- une seule rangée si peu de types
     local marge = 10                     -- marge latérale
     local zoneW = 280 - marge * 2        -- 260 utiles
-    local colW = math.floor(zoneW / nbCol)   -- 37px par colonne
+    local colW = math.floor(zoneW / math.max(nbCol, 1))
     local hMax = 40                      -- hauteur max des barres
-    for i, canon in ipairs(MHH_TYPES_ARMES) do
+    for i, canon in ipairs(types) do
         local barre = MHH_armesBarres[i]
         if not barre then
             barre = {}
@@ -5831,9 +5875,12 @@ function MHH_RaffraichirArmesHistogramme()
         local rang = math.floor((i - 1) / nbCol)
         local col = (i - 1) % nbCol
         -- géométrie de la rangée (ancrée depuis le HAUT du panneau)
-        local titreH = 24                 -- titre + place pour le compte au-dessus
-        local rangH = titreH + hMax + 14  -- barres + libellé
-        local axeY = titreH + rang * rangH + hMax   -- axe de la rangée (depuis haut)
+        local nbRangs = math.ceil(nbTypes / nbCol)
+        -- pitch d'une rangée : barres + libellé ; les axes se répartissent
+        -- du HAUT du panneau (rangée 0 en premier), centrés sous le titre
+        local pitch = hMax + 16           -- barres + libellé court
+        local topY = 22 + math.max(0, (158 - 22 - 12 - nbRangs * pitch) / 2)
+        local axeY = topY + rang * pitch + hMax   -- axe de la rangée (depuis haut)
         local x = marge + col * colW
         local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
         -- piste de fond (repère pleine hauteur) : de axeY-hMax à axeY
@@ -5849,10 +5896,14 @@ function MHH_RaffraichirArmesHistogramme()
         barre.txt:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, axeY + 2)
         barre.txt:SetWidth(colW)
         barre.txt:SetText("|cffd8c9a3" .. (MHH_TYPES_ARMES_COURT[canon] or canon) .. "|r")
-        -- compte au-dessus de la barre (ancré depuis le HAUT : y = sommet-haut-2)
+        -- compte DANS la piste, en haut (jamais hors panneau : la piste
+        -- fait hMax de haut, le compte s'y loge toujours)
         barre.count:ClearAllPoints()
-        barre.count:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, (axeY - hMax) - h - 2)
-        barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff5555550|r")
+        barre.count:SetPoint("TOP", MHH_armesPan, "TOPLEFT", x + (colW - 6) / 2, (axeY - hMax) + 2)
+        barre.count:SetTextColor(1, 1, 1, 1)
+        barre.count:SetShadowColor(0, 0, 0, 0.9)
+        barre.count:SetShadowOffset(1, -1)
+        barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff7777770|r")
     end
 end
 
