@@ -5661,17 +5661,7 @@ MHH_armesBtn:SetScript("OnClick", function()
         MHH_armesPan:Show()
     end
 end)
--- Rendu visible par défaut à l'ouverture de l'onglet Guilde : le bouton
--- icône de classe (22 px, sans texture propre) passait pour inactif —
--- l'histogramme semble « ne jamais s'afficher » quand il faut deviner le clic.
-if hooksecurefunc then
-    hooksecurefunc("AfficherOnglet", function(id)
-        if id == "profil" then
-            MHH_RaffraichirArmesHistogramme()
-            MHH_armesPan:Show()
-        end
-    end)
-end
+
 local profilSousTitre = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 profilSousTitre:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 184, -138)
 profilSousTitre:SetWidth(150)
@@ -5901,6 +5891,11 @@ profilStats:SetTextColor(1, 1, 1)
 profilStats:SetSpacing(4)
 
 RaffraichirProfil = function()
+    -- Histogramme des armes : affiché d'office à l'ouverture de l'onglet
+    -- (le bouton icône de classe, 22 px sans texture propre, passait pour
+    -- inactif — il reste cliquable pour le replier/déplier).
+    MHH_RaffraichirArmesHistogramme()
+    MHH_armesPan:Show()
     -- Photo du chasseur (portrait live)
     DefinirPortrait(profilPortrait.tex, "player")
     local total = nbChasses()
