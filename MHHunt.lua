@@ -1535,8 +1535,17 @@ local function ApprendreParId(unite)
     local idR = tonumber(guid:match("-(%d+)$"))
     if not idR or not MHH_RARES_PAR_ID[idR] then return end
     local nom = UnitName(unite) or ""
-    if nom == "" or MHH_CATALOGUE[nom] or DB.decouverts[nom] then return end
     local e = MHH_RARES_PAR_ID[idR]
+    -- Le serveur appelle la bête autrement que le data file (ex. « Rochelance »
+    -- vs « Lance-de-roche ») : le nom VU EN JEU devient la graphie principale
+    -- (l'ancien reste une clé de matching, mais ne s'affiche plus). Sans ça,
+    -- la bête restait invisible au carnet : l'alias n'est jamais « affichable ».
+    if nom ~= "" and MHH_NOM_AFFICHAGE[nom] and MHH_NOM_AFFICHAGE[nom] ~= nom then
+        local ancienPrincipal = MHH_NOM_AFFICHAGE[nom]
+        MHH_NOM_AFFICHAGE[nom] = nom
+        MHH_NOM_AFFICHAGE[ancienPrincipal] = nom -- l'ancien pointe vers le nouveau
+    end
+    if nom == "" or MHH_CATALOGUE[nom] or DB.decouverts[nom] then return end
     MHH_CATALOGUE[nom] = e.zone
     MHH_NOM_AFFICHAGE[nom] = nom -- nom réel appris : graphie principale
     MHH_NIVEAUX[nom] = e.niveau
@@ -5697,6 +5706,10 @@ MHH_armesVide:SetText(L("|cffa58b54Aucune prise mesurée encore — l'arme de vo
 MHH_armesVide:SetWidth(196)
 MHH_armesVide:Hide()
 MHH_armesBarres = {}
+-- HISTOGRAMME VERTICAL : barres de BAS en HAUT (façon camembert MH), une
+-- colonne par TYPE d'arme, hauteur proportionnelle aux prises. Le libellé
+-- du type est SOUS l'axe (vertical s'il est long), le compte au-dessus de
+-- la barre. Tout tient dans le cadre 216x168.
 function MHH_RaffraichirArmesHistogramme()
     if not DB then return end
     local entrees = {}
@@ -5708,30 +5721,50 @@ function MHH_RaffraichirArmesHistogramme()
     end
     local maxN = (entrees[1] and entrees[1][2]) or 1
     MHH_armesVide:SetShown(#entrees == 0)
+    -- 7 colonnes max, largeur adaptée au nombre présent
+    local nb = math.min(#entrees, 7)
+    local margeG, margeD = 10, 10
+    local zoneW = 216 - margeG - margeD       -- 196 utiles
+    local axeY = 128                           -- ligne de sol (bas du panneau)
+    local hMax = 88                           -- hauteur max des barres
     for i = 1, 7 do
         local barre = MHH_armesBarres[i]
         if not barre then
             barre = {}
             barre.fond = MHH_armesPan:CreateTexture(nil, "BACKGROUND")
-            barre.fond:SetSize(120, 10)
-            barre.fond:SetPoint("TOPLEFT", 12, -22 - (i - 1) * 18)
             barre.fond:SetColorTexture(0.25, 0.20, 0.12, 0.9)
             barre.fill = MHH_armesPan:CreateTexture(nil, "ARTWORK")
-            barre.fill:SetSize(0, 10)
-            barre.fill:SetPoint("TOPLEFT", 12, -22 - (i - 1) * 18)
             barre.fill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            barre.txt:SetPoint("TOPLEFT", 138, -22 - (i - 1) * 18 - 2)
-            barre.txt:SetJustifyH("LEFT")
+            barre.txt:SetJustifyH("CENTER")
+            barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            barre.count:SetJustifyH("CENTER")
             MHH_armesBarres[i] = barre
         end
         local e = entrees[i]
         if e then
-            barre.fond:Show() barre.fill:Show() barre.txt:Show()
-            barre.fill:SetSize(math.max(3, 120 * e[2] / maxN), 10)
-            barre.txt:SetText("|cffffd100" .. e[2] .. "|r " .. e[1])
+            local colW = (nb > 0) and math.floor(zoneW / nb) - 4 or 0
+            local x = margeG + (i - 1) * (colW + 4)
+            local h = math.max(4, math.floor(hMax * e[2] / maxN))
+            barre.fond:Show() barre.fill:Show() barre.txt:Show() barre.count:Show()
+            -- piste de fond sur toute la hauteur (repère visuel)
+            barre.fond:SetSize(colW, hMax)
+            barre.fond:SetPoint("BOTTOMLEFT", MHH_armesPan, "BOTTOMLEFT", x, 168 - axeY)
+            -- remplissage : de bas en haut
+            barre.fill:SetSize(colW, h)
+            barre.fill:SetPoint("BOTTOMLEFT", MHH_armesPan, "BOTTOMLEFT", x, 168 - axeY)
+            -- type d'arme : vertical (rotation) sous l'axe — lisible et compact
+            barre.txt:ClearAllPoints()
+            barre.txt:SetPoint("TOPLEFT", MHH_armesPan, "BOTTOMLEFT", x + colW - 4, 168 - axeY + 16)
+            pcall(function() barre.txt:SetRotation(math.rad(-90)) end)
+            barre.txt:SetWidth(64)
+            barre.txt:SetText("|cffd8c9a3" .. e[1] .. "|r")
+            -- compte au-dessus de la barre
+            barre.count:ClearAllPoints()
+            barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + colW / 2, 168 - axeY + h + 2)
+            barre.count:SetText("|cffffd100" .. e[2] .. "|r")
         else
-            barre.fond:Hide() barre.fill:Hide() barre.txt:Hide()
+            barre.fond:Hide() barre.fill:Hide() barre.txt:Hide() barre.count:Hide()
         end
     end
 end
@@ -5996,7 +6029,18 @@ RaffraichirProfil = function()
     pcall(function() profilPortrait:SetBackdropBorderColor(cr[1], cr[2], cr[3], 0.95) end)
     -- Titre de chasseur : famille au choix via /hunt titre, palier selon les stats
     local famille = DB.titreFamille or "naturaliste"
-    profilSousTitre:SetText("|cff8a6d3bTitre : |cffffd100« " .. TitreDeFamille(famille) .. " »|r")
+    local titreComplet = TitreDeFamille(famille)
+    profilSousTitre:SetText("|cff8a6d3bTitre : |cffffd100« " .. titreComplet .. " »|r")
+    -- Le titre est souvent tronqué (150 px de large) : le tooltip le montre entier
+    profilSousTitre.titreComplet = titreComplet
+    profilSousTitre:SetScript("OnEnter", function(self)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("|cffffd100« " .. (self.titreComplet or "?") .. " »|r")
+        GameTooltip:AddLine(L("|cffa58b54Titre de chasseur — changez de famille via /hunt titre|r"), 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    profilSousTitre:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     -- Vitrine de trophées : LES DERNIERS SUCCÈS OBTENUS (couleur, du plus
     -- récent au plus ancien). Emplacements inutilisés : masqués. Si aucun
     -- succès n'est encore obtenu, lot vedette grisé (vitrine en attente).
@@ -6404,8 +6448,8 @@ MHH_menagerieTitre:SetText(L("|cffffd100MÉNAGERIE|r"))
 
 -- L'enclos proprement dit : décor peint (TGA) au-dessus d'un repli procedural
 MHH_enclosMenagerie = CreateFrame("Frame", nil, MHH_menagerieFond)
-MHH_enclosMenagerie:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 10, -32)
-MHH_enclosMenagerie:SetSize(532, 166)
+MHH_enclosMenagerie:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 10, -26)
+MHH_enclosMenagerie:SetSize(532, 176)
 -- FOND PEINT : la scène complète (ciel, collines, herbe texturée, clôture,
 -- grange) est une SEULE image TGA par faction — cf Textures/enclos_*.tga.
 MHH_enclosFondImg = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
@@ -6424,7 +6468,7 @@ MHH_enclosCiel:SetColorTexture(0.47, 0.66, 0.92, 0.98)
 MHH_enclosBandesCiel = {}
 do
     -- Dégradé de ciel procédural (REPLI visible sous le TGA s'il manque)
-    local HAUT = 166
+    local HAUT = 176
     local NB = 8
     for b = 1, NB do
         local t = (b - 0.5) / NB
@@ -6468,6 +6512,11 @@ local function MHH_ChargerFondEnclos()
     -- via la teinte, le repli procedural reste dessous en pire cas.)
 end
 MHH_ChargerFondEnclos()
+
+-- Message « enclos vide » : recréé ici (perdu lors du passage au fond peint)
+MHH_enclosVide = MHH_enclosMenagerie:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+MHH_enclosVide:SetPoint("CENTER", MHH_enclosMenagerie, "CENTER", 0, 10)
+MHH_enclosVide:SetText(L("|cffa58b54L'enclos est vide — le régisseur dort.|r"))
 
 -- Mini-météo de l'enclos : reprend la météo réelle du client (C_Weather,
 -- serveur Forever) — pluie/neige/tempête tombent dans l'enclos et le ciel
@@ -6902,10 +6951,10 @@ pageMenagerie:HookScript("OnHide", ArreterMenagerie)
 MHH_boutonsEnclos = {}
 for idxEnc, enc in ipairs(MHH_ENCLOS) do
     local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-    -- rangée d'onglets juste SOUS le titre (l'enclos commence à -32)
+    -- sélecteur sur la RANGÉE DU TITRE (à droite du titre MÉNAGERIE)
     b:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT",
-        10 + (idxEnc - 1) * 116, -14)
-    b:SetSize(112, 16)
+        250 + (idxEnc - 1) * 74, -8)
+    b:SetSize(70, 16)
     b:SetNormalFontObject("GameFontHighlightSmall")
     b:SetText(enc.nom)
     b:GetFontString():SetPoint("CENTER", 0, 0)
@@ -6919,12 +6968,42 @@ for idxEnc, enc in ipairs(MHH_ENCLOS) do
         })
     end)
     MHH_boutonsEnclos[enc.cle] = b
+    -- Tooltip : rang requis si verrouillé, contenu sinon
+    b:SetScript("OnEnter", function(self)
+        if not GameTooltip or not DB then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("|cffffd100" .. enc.nom .. "|r")
+        local idxRang = RangGuilde(DB.points or 0)
+        if idxRang < enc.rang then
+            GameTooltip:AddLine(L("|cffd87a6aVerrouillé|r — s'ouvre au rang |cffffff00")
+                .. MHH_RANGS[enc.rang].nom .. L("|r"), 1, 1, 1, true)
+            GameTooltip:AddLine(L("|cffa58b54Continuez à chasser pour gravir les rangs.|r"), 0.8, 0.8, 0.8, true)
+        else
+            local nb = 0
+            for _, nom in ipairs(enc.specimens) do
+                if DB.menagerie and DB.menagerie[nom] then nb = nb + 1 end
+            end
+            GameTooltip:AddLine(L("Pensionnaires : |cffffd100") .. nb .. " / " .. #enc.specimens, 1, 1, 1, true)
+            if enc.cle == "volcan" then
+                GameTooltip:AddLine(L("|cffa58b54Enclos d'apparat — déplacez-y vos pensionnaires favoris.|r"), 0.8, 0.8, 0.8, true)
+            end
+        end
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     b:SetScript("OnClick", function()
         if not DB then return end
         local idxRang = RangGuilde(DB.points or 0)
         if idxRang < enc.rang then
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r L'") .. enc.nom
-                .. L(" s'ouvre au rang |cffffff00") .. MHH_RANGS[enc.rang].nom .. L("|r — continuez à chasser."))
+            -- verrouillé : le tooltip l'explique déjà — un discret tilt suffit
+            if b:GetFontString() then
+                local ancien = b:GetFontString():GetText()
+                b:GetFontString():SetText("|cffff5050" .. enc.nom .. "|r")
+                C_Timer.After(0.4, function()
+                    if b:GetFontString() then b:GetFontString():SetText(ancien) end
+                    RaffraichirMenagerie()
+                end)
+            end
             return
         end
         DB.enclosActif = enc.cle
@@ -6939,8 +7018,8 @@ MHH_boutonsSpecimen = {}
 local function BoutonSpecimen(i)
     local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
     b:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT",
-        10 + ((i - 1) % 4) * 134, -200 - math.floor((i - 1) / 4) * 32)
-    b:SetSize(130, 28)
+        10 + ((i - 1) % 4) * 134, -206 - math.floor((i - 1) / 4) * 32)
+    b:SetSize(130, 26)
     pcall(function()
         b:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -6990,7 +7069,7 @@ end
 
 -- Ligne d'info + nourrissage
 MHH_menagerieInfo = MHH_menagerieFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_menagerieInfo:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 14, -250)
+MHH_menagerieInfo:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 14, -266)
 MHH_menagerieInfo:SetWidth(532)
 MHH_menagerieInfo:SetWordWrap(true)
 MHH_boutonNourrir = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
@@ -7226,10 +7305,13 @@ function RaffraichirMenagerie()
         if b then
             if enc.cle == biome then
                 b:GetFontString():SetText("|cffffd100" .. enc.nom .. "|r")
+                pcall(function() b:SetBackdropBorderColor(0.9, 0.75, 0.35, 1) end)
             elseif idxRang < enc.rang then
                 b:GetFontString():SetText("|cff555555" .. enc.nom .. "|r")
+                pcall(function() b:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.8) end)
             else
                 b:GetFontString():SetText(enc.nom)
+                pcall(function() b:SetBackdropBorderColor(0.45, 0.36, 0.2, 0.9) end)
             end
         end
     end
