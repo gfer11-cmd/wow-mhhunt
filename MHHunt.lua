@@ -5830,13 +5830,11 @@ MHH_armesVide:SetText(L("|cffa58b54Aucune prise mesurée encore — l'arme de vo
 MHH_armesVide:SetWidth(196)
 MHH_armesVide:Hide()
 MHH_armesBarres = {}
--- HISTOGRAMME (layout IMMANQUABLE, tout est ancré depuis le BAS du panneau) :
--- pour chaque type d'arme DE LA CLASSE du chasseur : une colonne dont la
--- barre monte depuis une ligne d'axe explicite. Deux rangées empilées ;
--- dans chaque rangée, de BAS en haut : libellé, axe, barre, piste.
+-- HISTOGRAMME — colonnes fines, barres petites, libellés VERTICAUX en
+-- diagonale (une lettre par ligne, décalée d'un espace à chaque étage :
+-- astuce Vanilla, SetRotation n'existe pas sur ce client).
 function MHH_RaffraichirArmesHistogramme()
     if not DB then return end
-    -- comptes par type de la classe
     local types = MHH_TypesArmesJoueur()
     local comptes = {}
     for _, canon in ipairs(types) do comptes[canon] = 0 end
@@ -5849,24 +5847,14 @@ function MHH_RaffraichirArmesHistogramme()
     local total = 0
     for _, n in pairs(comptes) do total = total + n end
     MHH_armesVide:SetShown(total == 0)
-    -- répartition en rangées
     local nbTypes = #types
-    local nbCol = math.ceil(nbTypes / 2)
-    if nbCol < 4 then nbCol = nbTypes end
-    local nbRangs = math.ceil(nbTypes / nbCol)
-    -- géométrie (panneau 280x158, TOUT depuis le BAS) :
-    local margeBas = 8     -- liseré bas
-    local hLbl = 12        -- libellé court
-    local hMax = 40        -- barres
-    local hCmp = 12        -- compte
-    -- hauteur d'une rangée complète + intervalle
-    local pitchRang = hLbl + 4 + hMax + 4 + hCmp
-    -- la 1re rangée (rang=0) est EN BAS, la 2e au-dessus
-    -- axe de la rangée r, mesuré DEPUIS LE BAS du panneau :
-    --   bas rangée 0 : margeBas + hLbl + 4 (libellé sous l'axe)
-    local axe0 = margeBas + hLbl + 4
-    -- intervalle au-dessus d'une rangée pour le compte de la suivante
-    local ecartRangs = hCmp + 6
+    -- géométrie (panneau 280x158, tout ancré depuis le BAS)
+    local margeCote = 6
+    local colW = math.floor((280 - margeCote * 2) / nbTypes)
+    local hMax = 30                       -- barres PLUS PETITES
+    -- l'axe est HAUT : sous lui, la place des libellés verticaux (la plus
+    -- longue étiquette « Haches 2M » = 8 lettres x 9px = 72px de descente)
+    local axe = 78                        -- ligne d'axe depuis le bas
     for i, canon in ipairs(types) do
         local barre = MHH_armesBarres[i]
         if not barre then
@@ -5876,41 +5864,45 @@ function MHH_RaffraichirArmesHistogramme()
             barre.fill = MHH_armesPan:CreateTexture(nil, "ARTWORK")
             barre.fill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            barre.txt:SetJustifyH("CENTER")
+            barre.txt:SetJustifyH("LEFT")
             barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             barre.count:SetJustifyH("CENTER")
             MHH_armesBarres[i] = barre
         end
         local n = comptes[canon]
-        local rang = math.floor((i - 1) / nbCol)
-        local col = (i - 1) % nbCol
-        -- position horizontale
-        local margeCote = 10
-        local colW = math.floor((280 - margeCote * 2) / nbCol)
-        local x = margeCote + col * colW
-        -- AXE de la rangée depuis le BAS : rangée 0 en bas, rangée 1 dessus
-        local axeDepuisBas = axe0 + rang * (hMax + ecartRangs)
-        -- LIBELLE : sous l'axe (entre axe et bas de rangée)
-        barre.txt:ClearAllPoints()
-        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOM", x + colW / 2, axeDepuisBas - 2)
-        barre.txt:SetWidth(colW)
-        barre.txt:SetText("|cffd8c9a3" .. (MHH_TYPES_ARMES_COURT[canon] or canon) .. "|r")
-        -- PISTE (repère) : monte de l'axe sur hMax
-        barre.fond:SetSize(colW - 6, hMax)
+        local x = margeCote + (i - 1) * colW
+        local cx = x + colW / 2
+        -- PISTE : repère sous le compte, de l'axe à axe+hMax
+        barre.fond:SetSize(colW - 8, hMax)
         barre.fond:ClearAllPoints()
-        barre.fond:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + (colW - 6) / 2, axeDepuisBas)
-        -- BARRE : monte de l'axe sur h
-        local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
+        barre.fond:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx - (colW - 8) / 2, axe)
+        -- BARRE : monte de l'axe
+        local h = (total > 0 and n > 0) and math.max(2, math.floor(hMax * n / math.max(total, 1))) or 0
         barre.fill:ClearAllPoints()
-        barre.fill:SetSize(colW - 6, h)
-        barre.fill:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + (colW - 6) / 2, axeDepuisBas)
+        barre.fill:SetSize(colW - 8, h)
+        barre.fill:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx - (colW - 8) / 2, axe)
         barre.fill:SetShown(n > 0)
-        -- COMPTE : au sommet de la barre (h+2 au-dessus de l'axe ; pour h=0,
-        -- il repose sur l'axe — jamais de chevauchement de rangée : l'écart
-        -- ecartRangs compte hCmp+6 pour lui laisser la place)
+        -- COMPTE : au sommet de la barre
         barre.count:ClearAllPoints()
-        barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", x + (colW - 6) / 2, axeDepuisBas + h + 2)
+        barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx, axe + h + 1)
         barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff7777770|r")
+        -- LIBELLÉ VERTICAL DIAGONAL : une lettre par ligne, décalée d'un
+        -- espace à chaque étage (astuce Vanilla). Commence sous l'axe et
+        -- descend vers le bas du panneau.
+        local court = MHH_TYPES_ARMES_COURT[canon] or canon
+        local lignes = {}
+        for li = 1, #court do
+            local c = court:sub(li, li)
+            if c ~= " " then
+                lignes[#lignes + 1] = string.rep(" ", li - 1) .. c
+            end
+        end
+        barre.txt:ClearAllPoints()
+        -- ancré au point d'axe de la colonne, le texte descend sous l'axe
+        barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx - 3, axe - 1)
+        barre.txt:SetWidth(60)
+        barre.txt:SetJustifyH("LEFT")
+        barre.txt:SetText("|cffd8c9a3" .. table.concat(lignes, "\n") .. "|r")
     end
 end
 
