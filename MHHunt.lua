@@ -5641,6 +5641,8 @@ end -- fin bloc page Succès
 -- Fond encadré, cohérent avec les autres pages
 do
 local boutonTitre -- forward : créé plus bas, référencé par RaffraichirProfil
+local profilStatsLabel -- forward : le bouton armes masque ce bloc à l'ouverture
+local profilStats -- forward : idem (bloc statistiques de la page Guilde)
 local profilFond = CreateFrame("Frame", nil, pageProfil, MHH_TEMPLATE_BACKDROP)
 profilFond:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 44, -42)
 profilFond:SetSize(552, 314)
@@ -5760,13 +5762,16 @@ MHH_armesBtn:SetScript("OnEnter", function(self)
 end)
 MHH_armesBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 MHH_armesPan = CreateFrame("Frame", nil, pageProfil, MHH_TEMPLATE_BACKDROP)
-MHH_armesPan:SetPoint("TOPLEFT", MHH_armesBtn, "BOTTOMLEFT", -38, -8)
-MHH_armesPan:SetSize(290, 196)
+-- Le panneau SE SUPERPOSE au bloc statistiques (la page est dense) : l'ouvrir
+-- masque les stats, le fermer les rend. Positionné pile sur la zone stats.
+MHH_armesPan:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 58, -192)
+MHH_armesPan:SetSize(280, 158)
 MHH_armesPan:Hide()
 MHH_armesPan:SetFrameStrata("HIGH")
 -- L'histogramme suit la fenêtre et l'onglet : jamais d'encart orphelin
 -- qui survit à la fermeture du carnet ou à un changement d'onglet.
-pageProfil:SetScript("OnHide", function() MHH_armesPan:Hide() end)
+-- (fermeture de l'histogramme gérée par le HookScript OnHide plus bas :
+--  il rend aussi le bloc statistiques)
 pcall(function()
     MHH_armesPan:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -5804,10 +5809,10 @@ function MHH_RaffraichirArmesHistogramme()
     for _, n in pairs(comptes) do total = total + n end
     MHH_armesVide:SetShown(total == 0)
     local nbCol = 7                      -- colonnes par rangée
-    local marge = 12                     -- marge latérale
-    local zoneW = 290 - marge * 2        -- 266 utiles
-    local colW = math.floor(zoneW / nbCol)   -- 38px par colonne
-    local hMax = 48                      -- hauteur max des barres
+    local marge = 10                     -- marge latérale
+    local zoneW = 280 - marge * 2        -- 260 utiles
+    local colW = math.floor(zoneW / nbCol)   -- 37px par colonne
+    local hMax = 40                      -- hauteur max des barres
     for i, canon in ipairs(MHH_TYPES_ARMES) do
         local barre = MHH_armesBarres[i]
         if not barre then
@@ -5826,8 +5831,8 @@ function MHH_RaffraichirArmesHistogramme()
         local rang = math.floor((i - 1) / nbCol)
         local col = (i - 1) % nbCol
         -- géométrie de la rangée (ancrée depuis le HAUT du panneau)
-        local titreH = 34                 -- titre + place pour le compte au-dessus
-        local rangH = titreH + hMax + 16  -- barres + libellé
+        local titreH = 24                 -- titre + place pour le compte au-dessus
+        local rangH = titreH + hMax + 14  -- barres + libellé
         local axeY = titreH + rang * rangH + hMax   -- axe de la rangée (depuis haut)
         local x = marge + col * colW
         local h = (total > 0 and n > 0) and math.max(3, math.floor(hMax * n / math.max(total, 1))) or 0
@@ -5854,9 +5859,23 @@ end
 MHH_armesBtn:SetScript("OnClick", function()
     if MHH_armesPan:IsShown() then
         MHH_armesPan:Hide()
+        -- le bloc statistiques revient
+        if profilStatsLabel then profilStatsLabel:Show() end
+        if profilStats then profilStats:Show() end
     else
         MHH_RaffraichirArmesHistogramme()
+        -- le bloc statistiques laisse la place à l'histogramme
+        if profilStatsLabel then profilStatsLabel:Hide() end
+        if profilStats then profilStats:Hide() end
         MHH_armesPan:Show()
+    end
+end)
+-- Refermer l'histogramme (et rendre les stats) quand on quitte l'onglet Guilde
+pageProfil:HookScript("OnHide", function()
+    if MHH_armesPan and MHH_armesPan:IsShown() then
+        MHH_armesPan:Hide()
+        if profilStatsLabel then profilStatsLabel:Show() end
+        if profilStats then profilStats:Show() end
     end
 end)
 
@@ -6076,10 +6095,10 @@ profilSeparateur2:SetHeight(2)
 profilSeparateur2:SetWidth(264)
 profilSeparateur2:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 64, -186)
 profilSeparateur2:SetColorTexture(0.62, 0.48, 0.22, 0.65)
-local profilStatsLabel = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+profilStatsLabel = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 profilStatsLabel:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 64, -198)
 profilStatsLabel:SetText(L("|cffffd100STATISTIQUES DE CHASSE|r"))
-local profilStats = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+profilStats = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 profilStats:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 64, -224)
 profilStats:SetWidth(270)
 profilStats:SetJustifyH("LEFT")
