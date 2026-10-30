@@ -15,9 +15,10 @@ MHHunt.lua
 ```
 
 ## Sprites de la ménagerie
-Les spécimens utilisent `Textures/Specimens/<slug>.tga` s'il existe (repli : grille
-pixel intégrée). Régénérer un sprite : dessiner un PNG 32x32 transparent, puis
-`magick sprite.png -depth 32 sprite.tga` (ou PIL `img.save("sprite.tga")`).
+Les spécimens sont des sprites 48x48 en **vue 3/4 de dessus** (style farm sim),
+2 frames d'animation (`<slug>.tga` + `<slug>_2.tga`), rendus x2.4 dans l'enclos.
+Repli : grille pixel intégrée si le TGA manque. Pour remplacer un sprite :
+dessiner un PNG 48x48 transparent puis `img.save("slug.tga")` (PIL).
 Slugs : humar, takk, mazzranache, sarkoth, flagglemurk, naraxis, snarlflare,
 morladim, crocplat, crocolisque, regisseur, regisseur_dort.
 

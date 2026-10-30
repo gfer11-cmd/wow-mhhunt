@@ -6497,9 +6497,9 @@ local function CreerSpriteMenagerie(nom, defOpt)
             t:SetAllPoints(f)
             if t:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Specimens\\" .. slug .. ".tga") then
                 f.utiliseTga = true
-                -- Rendu x2.5 : les bêtes remplissent mieux l'enclos
-                -- (32 px d'art -> 200 px à l'écran)
-                f:SetSize(16 * MHH_TAILLE_PIX * 2.5, 16 * MHH_TAILLE_PIX * 2.5)
+                -- Sprites 48x48 vue 3/4 DE DESSUS (style farm sim top-down) :
+                -- rendu x2 -> 240 px à l'écran, présence nette dans l'enclos
+                f:SetSize(16 * MHH_TAILLE_PIX * 2.4, 16 * MHH_TAILLE_PIX * 2.4)
                 f.tgaA = t
                 pcall(function() t:SetTexelSnappingBias(0) end) -- pixel art net
                 -- FRAME 2 d'animation : <slug>_2.tga si le fichier existe
