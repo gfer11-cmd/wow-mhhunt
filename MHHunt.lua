@@ -4969,17 +4969,17 @@ for i = 1, 5 do
     -- d'appoint vivent sous « CONTRATS DE LA GUILDE », d'où le décalage.
     local y = (i == 1) and -32 or (-88 - (i - 2) * 24)
     local l = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    -- Centre vertical du texte = centre du bouton (20 px) : le texte
-    -- (~12 px) est ancré à y+4, alignement net à chaque ligne.
-    l:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, y + 4)
-    l:SetWidth(360)
-    l:SetJustifyH("LEFT")
-    l:SetShadowColor(0, 0, 0, 1)
-    l:SetShadowOffset(1, -1)
     local b = CreateFrame("Button", nil, contratsFond, MHH_TEMPLATE_BACKDROP)
     b:SetPoint("TOPRIGHT", contratsFond, "TOPRIGHT", -16, y)
     b:SetSize(104, 20)
     b:SetText("Prendre")
+    -- Le texte est ancré AU BOUTON, même référence verticale : le centre
+    -- du texte colle au centre du bouton, quelle que soit la fonte.
+    l:SetPoint("LEFT", b, "RIGHT", -496, 0)
+    l:SetWidth(360)
+    l:SetJustifyH("LEFT")
+    l:SetShadowColor(0, 0, 0, 1)
+    l:SetShadowOffset(1, -1)
     b:SetNormalFontObject("GameFontHighlightSmall")
     b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     pcall(function()
@@ -6915,8 +6915,8 @@ MHH_boutonsSpecimen = {}
 local function BoutonSpecimen(i)
     local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
     b:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT",
-        10 + ((i - 1) % 4) * 134, -206 - math.floor((i - 1) / 4) * 32)
-    b:SetSize(130, 30)
+        10 + ((i - 1) % 4) * 134, -200 - math.floor((i - 1) / 4) * 32)
+    b:SetSize(130, 28)
     pcall(function()
         b:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -6965,11 +6965,11 @@ end
 
 -- Ligne d'info + nourrissage
 MHH_menagerieInfo = MHH_menagerieFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_menagerieInfo:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 12, -272)
+MHH_menagerieInfo:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 14, -250)
 MHH_menagerieInfo:SetWidth(532)
 MHH_menagerieInfo:SetWordWrap(true)
 MHH_boutonNourrir = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonNourrir:SetPoint("BOTTOMRIGHT", MHH_menagerieFond, "BOTTOMRIGHT", -122, 10)
+MHH_boutonNourrir:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", 68, 10)
 MHH_boutonNourrir:SetSize(112, 22)
 pcall(function()
     MHH_boutonNourrir:SetBackdrop({
@@ -7019,7 +7019,7 @@ MHH_boutonNourrir:SetScript("OnClick", function()
     RaffraichirMenagerie()
 end)
 MHH_boutonGater = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonGater:SetPoint("BOTTOMRIGHT", MHH_menagerieFond, "BOTTOMRIGHT", -8, 10)
+MHH_boutonGater:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", 196, 10)
 MHH_boutonGater:SetSize(112, 22)
 pcall(function()
     MHH_boutonGater:SetBackdrop({
@@ -7052,7 +7052,7 @@ MHH_boutonGater:SetScript("OnClick", function()
 end)
 -- Relâcher : le spécimen repart dans la nature (la fiche de chasse reste)
 MHH_boutonRelacher = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonRelacher:SetPoint("BOTTOMLEFT", MHH_menagerieFond, "BOTTOMLEFT", 8, 10)
+MHH_boutonRelacher:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", -62, 10)
 MHH_boutonRelacher:SetSize(112, 22)
 pcall(function()
     MHH_boutonRelacher:SetBackdrop({
@@ -7087,7 +7087,7 @@ end)
 -- Tous nourrir : un clic, tous les pensionnaires affamés ou en petite faim
 -- reçoivent une viande (jusqu'à épuisement de la réserve)
 MHH_boutonTous = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonTous:SetPoint("BOTTOMLEFT", MHH_menagerieFond, "BOTTOMLEFT", 126, 10)
+MHH_boutonTous:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", -190, 10)
 MHH_boutonTous:SetSize(112, 22)
 pcall(function()
     MHH_boutonTous:SetBackdrop({
