@@ -6336,7 +6336,21 @@ MHH_enclosCiel:SetAllPoints()
 -- procedural (bandes de ciel + damier) reste dessous si le fichier manque.
 MHH_enclosFondImg = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
 MHH_enclosFondImg:SetAllPoints(MHH_enclosMenagerie)
-local enclosTgaOk = MHH_enclosFondImg:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\enclos.tga")
+-- Décor selon la FACTION du chasseur : ranch horde (savane rouge/brune)
+-- ou alliance (prairie verte/blue) — repli sur le décor neutre.
+local cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos.tga"
+pcall(function()
+    local faction = UnitFactionGroup and UnitFactionGroup("player")
+    if faction == "Horde" or faction == "Alliance" then
+        cheminEnclos = "Interface\\AddOns\\MHHunt\\Textures\\enclos_" ..
+            (faction == "Horde" and "horde" or "alliance") .. ".tga"
+    end
+end)
+local enclosTgaOk = MHH_enclosFondImg:SetTexture(cheminEnclos)
+if not enclosTgaOk then
+    -- décor de faction absent : essai du décor neutre
+    enclosTgaOk = MHH_enclosFondImg:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\enclos.tga")
+end
 if not enclosTgaOk then MHH_enclosFondImg:Hide() end
 -- Dégradé de ciel procédural (REPLI si le TGA est absent)
 MHH_enclosBandesCiel = {}
@@ -6483,6 +6497,9 @@ local function CreerSpriteMenagerie(nom, defOpt)
             t:SetAllPoints(f)
             if t:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Specimens\\" .. slug .. ".tga") then
                 f.utiliseTga = true
+                -- Rendu x2.5 : les bêtes remplissent mieux l'enclos
+                -- (32 px d'art -> 200 px à l'écran)
+                f:SetSize(16 * MHH_TAILLE_PIX * 2.5, 16 * MHH_TAILLE_PIX * 2.5)
                 f.tgaA = t
                 pcall(function() t:SetTexelSnappingBias(0) end) -- pixel art net
                 -- FRAME 2 d'animation : <slug>_2.tga si le fichier existe

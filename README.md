@@ -21,8 +21,12 @@ pixel intégrée). Régénérer un sprite : dessiner un PNG 32x32 transparent, p
 Slugs : humar, takk, mazzranache, sarkoth, flagglemurk, naraxis, snarlflare,
 morladim, crocplat, crocolisque, regisseur, regisseur_dort.
 
-## Fond de l'enclos
-`Textures/enclos.tga` (532x166) : scène pixel-art complète — ciel dégradé,
-nuages, soleil, collines, arbre, herbe texturée, chemin, clôture, grange.
-Remplaçable par n'importe quelle image 532x166 (TGA RGBA). La météo et le
-cycle jour/nuit la teintent automatiquement.
+## Fond de l'enclos (par faction)
+Le décor dépend de la faction du chasseur :
+- `Textures/enclos_horde.tga` — ranch de la Horde (savane, accents rouges)
+- `Textures/enclos_alliance.tga` — ranch de l'Alliance (prairie, accents bleus)
+- `Textures/enclos.tga` — décor neutre (repli si le fichier de faction manque)
+
+Chaque image fait 532x166 (TGA RGBA), remplaçable librement. La météo et le
+cycle jour/nuit les teintent automatiquement. Les spécimens sont rendus x2.5
+depuis les sprites 32x32 (`<slug>.tga` + frame d'animation `<slug>_2.tga`).
