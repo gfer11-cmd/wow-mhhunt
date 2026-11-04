@@ -1,0 +1,14 @@
+## Interface: 11200
+## Title: MH Hunt — Carnet du chasseur
+## Notes: Carnet de chasse des rares Forever : gibier, contrats, guilde, ménagerie, cuisine, armes.
+## Author: gfer11
+## Version: 0.126
+## SavedVariablesPerCharacter: LaChasseDB
+## Dependencies:
+## OptionalDeps:
+
+# Ordre de chargement imposé (ponts MHH_L / MHH_DB / MHH_Carnet) :
+MHHuntData.lua
+mhhunt.lua
+Specimens.lua
+Menagerie.lua
