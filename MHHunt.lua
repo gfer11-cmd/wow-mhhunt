@@ -7,6 +7,7 @@ local defaults = {
     chasses = {},          -- [nom] = { kills = n, vu = true/false }
     missions = {},         -- [id mission] = date d'accomplissement
     decouverts = {},       -- rares Forever inconnus détectés automatiquement
+    rencontres = {},       -- v0.119 : première rencontre de chaque rare (succès découverte)
     succes = {},           -- [id] = timestamp
     serie = 0,             -- chasses consécutives sans mourir
     zonesChassees = {},    -- [zone] = true
@@ -19,10 +20,12 @@ local defaults = {
     config = {
         banniere = true,
         son = true,
+        emotePerdu = true, -- v0.35 : mise à genou quand le gibier est perdu (/hunt emote off)
         killSouple = true, -- true: participation compte, false: kill strict
         icone = "custom",  -- "wow" ou "custom" (Textures/carnet.tga)
         fond = "custom",   -- "wow" (couleur bois) ou "custom" (Textures/fond.tga parchemin)
         texUI = "custom",  -- "wow" ou "custom" : bandeau.tga / zone.tga / chrono.tga
+        toast = "custom",  -- "custom" (toast1.tga validations + toast2.tga annonces) ou "wow"
         musique = "wow",   -- "off" | "wow" (MPQ du jeu) | "custom" (addon MHAmbiance)
         -- NB : taille d'affichage du bandeau custom FIXE (660x254, ratio
         -- de bandeau.tga) — les anciennes clés bandeauL/H sont ignorées
@@ -36,6 +39,9 @@ local DB
 local RaffraichirCarnet -- déclarée ici, définie dans la section Carnet (UI)
 local carnet            -- idem, créé dans la section Carnet
 local RaffraichirAccueil -- idem, page Accueil (appellée par ContratQuotidien)
+MHH_MontrerSerment = function() end -- forward : panneau du serment (voie
+-- souple/stricte), défini dans la section tuto — GLOBALE préfixée MHH_
+-- pour économiser les 200 locales du chunk principal (LUA_WARNING v0.62)
 
 -- ============================================
 -- 3. LOCALISATION (FR / EN) — publication
@@ -58,12 +64,31 @@ MH_TEXTES = {
         tab_contrats = "Contracts", tab_missions = "Quests", tab_succes = "Achievements",
         tab_cuisine = "Cooking", tab_menagerie = "Menagerie", tab_options = "Options",
         langue_changee = "Addon language: English. |cffa58b54(/reload to refresh the journal)|r",
+        ["Croiser pour la première fois un rare"] = "Encounter a rare for the first time",
+        ["Croiser 5 rares différents"] = "Encounter 5 different rares",
+        ["Croiser 10 rares différents"] = "Encounter 10 different rares",
+        ["Croiser 25 rares différents"] = "Encounter 25 different rares",
+        ["Croiser tous les rares d'une même région"] = "Encounter every rare of a single region",
+        ["Avoir 5 pensionnaires en enclos"] = "Have 5 residents in the pen",
+        ["Œil du traqueur"] = "Eye of the Tracker",
+        ["Vieille connaissance des sentiers"] = "Old Trail Acquaintance",
+        ["Naturaliste régional"] = "Regional Naturalist",
+        ["Éleveur"] = "Breeder",
+        ["|cffffd100[MH Hunt]|r Première rencontre : |cffffff00"] = "|cffffd100[MH Hunt]|r First encounter: |cffffff00",
         ["|cffffd100[MH Hunt]|r Tous les succès remis à zéro — ils se débloqueront de nouveau à la prochaine action qui les valide."] = "|cffffd100[MH Hunt]|r All achievements reset — they will unlock again the next time their condition is met.",
         ["|cffffd100[MH Hunt]|r Missions remises à zéro — mission active abandonnée, toutes les missions redeviennent disponibles."] = "|cffffd100[MH Hunt]|r Quests reset — active quest abandoned, all quests available again.",
         ["|cffffd100[MH Hunt]|r Enclos vidé — les spécimens sont partis dans la nature (fiches et trophées conservés)."] = "|cffffd100[MH Hunt]|r Pen emptied — the specimens are back in the wild (cards and trophies kept).",
         ["|cffffd100[MH Hunt]|r Carnet vidé — fiches et comptes de chasse effacés (succès, trophées et points de guilde conservés)."] = "|cffffd100[MH Hunt]|r Journal emptied — cards and kill counts erased (achievements, trophies and guild points kept).",
         [" chasse"] = " hunt",
+        [" cm"] = " cm",
         [" chasses"] = " hunts",
+        [" chasse, "] = " hunt, ",
+        [" chasse au compteur."] = " hunt on the counter.",
+        [" chasse réussie."] = " hunt successful.",
+        ["Trophée prélevé : "] = "Trophy taken: ",
+        ["Trophées prélevés : "] = "Trophies taken: ",
+        [" découpe manquée (le morceau s'est abîmé)."] = " carve missed (the piece was ruined).",
+        [" découpes manquées (les morceaux se sont abîmés)."] = " carves missed (the pieces were ruined).",
         [" gibier"] = " game",
         [" gibiers"] = " game",
         [" niv. "] = " lvl ",
@@ -129,7 +154,40 @@ MH_TEXTES = {
         ["CHASSE ÉCHOUÉE"] = "HUNT FAILED",
         ["CIBLE DU JOUR"] = "TARGET OF THE DAY",
         ["CONTRAT ACTIF"] = "ACTIVE CONTRACT",
-        ["Capture-le : piège de chasse puis acheve-le,"] = "Capture it: hunting trap, then finish it off,",
+        ["Capture-le : mène la chasse jusqu'au bout,"] = "Hunt it down to the very end,",
+        ["Capturable"] = "Capturable",
+        ["Une féline rapide et convoitée des chasseurs : sa cadence d'attaque fait des étincelles."] = "A quick, sought-after feline among hunters: her attack pace sparkles.",
+        ["Une hyène qui ricane dans la poussière des Tarides — on l'entend avant de la voir."] = "A snickering hyena in the Barrens dust — you hear her before you see her.",
+        ["Un serpent des vents qui plane au-dessus des Tarides : sa lame est un croc."] = "A wind serpent gliding over the Barrens: its blade is a fang.",
+        ["Sa toile, près des marais des Paluns, boit plus vite qu'elle ne mord."] = "Her web, by the Wetlands marshes, drinks faster than she bites.",
+        ["Une harpie du Dun Morogh : son hurlement glace le sang des nains au petit matin."] = "A Dun Morogh harpy: her howl chills dwarven blood at dawn.",
+        ["Assiette du pisteur"] = "Tracker's Platter",
+        ["Pain de miel du régisseur"] = "Steward's Honey Bread",
+        ["Plat du jour — moitié prix"] = "Daily special — half cost",
+        ["Plat du jour :"] = "Daily special:",
+        ["CARNET COMPLET — tous les succès sont obtenus !"] = "COMPLETE JOURNAL — every achievement earned!",
+        ["Tous les succès du chasseur sont obtenus !"] = "Every hunter achievement earned!",
+        ["(moitié prix)"] = "(half cost)",
+        ["Bourse du chasseur"] = "Hunter's pouch",
+        ["Repas préparé"] = "Prepared meal",
+        ["La première recette que l'on apprend au bivouac."] = "The first recipe every camper learns.",
+        ["L'herbe aromatique réveille la viande de gibier."] = "Aromatic herbs wake up the game meat.",
+        ["Le plat des vieux pisteurs : tient au corps pour de longues traques."] = "Old trackers' fare: hearty enough for long hunts.",
+        ["Le péché mignon du régisseur — les pensionnaires en raffolent."] = "The steward's guilty pleasure — the menagerie loves it.",
+        ["Un plat de légende, digne des plus grandes chasses."] = "A legendary dish, worthy of the greatest hunts.",
+        ["Récoltée sur la dépouille (40% de chance par prise)."] = "Harvested from kills (40% chance per take).",
+        ["Cueillette en zone de chasse (25% de chance)."] = "Gathered in hunting grounds (25% chance).",
+        ["Butiné sur les rares abattus (10% de chance)."] = "Gathered from slain rares (10% chance).",
+        ["Sac plein — cuisine pour libérer de la place."] = "Pouch full — cook to free up space.",
+        ["Sac de viande plein — la prise se perd (cuisine !)."] = "Meat pouch full — the take is lost (cook!).",
+        ["Pot de miel plein — la prise se perd (cuisine !)."] = "Honey jar full — the take is lost (cook!).",
+        ["Sac d'herbes plein — la cueillette se perd (cuisine !)."] = "Herb pouch full — the pick is lost (cook!).",
+        ["En bourse : "] = "In pouch: ",
+        ["— s'appliquera à la prochaine prise."] = "— will apply to the next take.",
+        ["Aucun — cuisinez pour bonifier la prochaine chasse."] = "None — cook to boost your next hunt.",
+        ["Ingrédients :"] = "Ingredients:",
+        ["Cuisiner"] = "Cook",
+        ["Capturé"] = "Captured",
         ["Carnet usé"] = "Worn Journal",
         ["Carnet, heure de l'observation : "] = "Journal, time of the sighting: ",
         ["Cartographe des terres sauvages"] = "Wilderness Cartographer",
@@ -155,6 +213,13 @@ MH_TEXTES = {
         ["Civet épicé"] = "Spiced Stew",
         ["Clic : en faire votre contrat actif."] = "Click: make it your active contract.",
         ["Clic : famille de titre suivante"] = "Click: next title family",
+        ["Épingler en favori"] = "Pin as favorite",
+        ["Retirer des favoris"] = "Remove from favorites",
+        ["Spécimen encore mal connu du carnet."] = "Specimen still poorly known to the journal.",
+        ["Mission acceptée :"] = "Mission accepted:",
+        ["mission en cours"] = "mission in progress",
+        [" |cffa58b54(~"] = " |cffa58b54(~",
+        [" cm d'envergure)|r"] = " cm wingspan)|r",
         ["Clic : le sélectionner (nourrir / gâter / relâcher)."] = "Click: select it (feed / pet / release).",
         ["Clic : voir ses conditions."] = "Click: view its conditions.",
         ["Clic droit : Succès"] = "Right-click: Achievements",
@@ -183,7 +248,7 @@ MH_TEXTES = {
         ["Dernière prise : |cffffd100"] = "Latest kill: |cffffd100",
         ["Découvertes : |cffffd100"] = "Discoveries: |cffffd100",
         ["Découvrir 5 rares inconnus"] = "Discover 5 unknown rares",
-        ["Découvrir un rare inconnu (mode auto)"] = "Discover an unknown rare (auto mode)",
+        ["Découvrir un rare inconnu"] = "Discover an unknown rare",
         ["Dénicheur de sentiers"] = "Trailblazer",
         ["ERREUR victoire : "] = "VICTORY ERROR: ",
         ["EXTÉNUÉ !"] = "EXHAUSTED!",
@@ -197,6 +262,12 @@ MH_TEXTES = {
         ["Festin de légende"] = "Legendary Feast",
         ["Flamme tenace"] = "Tenacious Flame",
         ["Gabarit : inconnu"] = "Size: unknown",
+        ["Gabarit : "] = "Size: ",
+        ["Gabarit : non mesuré"] = "Size: not measured",
+        ["Gabarit : ~"] = "Size: ~",
+        ["2200 cm"] = "2200 cm",
+        ["Niveau observé : "] = "Observed level: ",
+        ["Niveaux observés : "] = "Observed levels: ",
         ["Gabarit : niv "] = "Size: lvl ",
         ["Grand gibier"] = "Big Game",
         ["Grotte du clan Mosh'Ogg"] = "Mosh'Ogg Clan Cave",
@@ -271,7 +342,7 @@ MH_TEXTES = {
         ["Première page du carnet d'Hemet"] = "First Page of Hemet's Journal",
         ["Preneur de notes"] = "Note Taker",
         ["Promotion de guilde"] = "Guild Promotion",
-        ["Rang de chasseur : |cffffd100"] = "Hunter rank: |cffffd100",
+        ["Rang de chasseur : "] = "Hunter rank: ",
         ["Rapportez cette prise pour une prime de +20 points."] = "Turn in this kill for a +20 point bounty.",
         ["Rechercher un succès..."] = "Search an achievement...",
         ["Regardez les charognards : ils tournent là où le gibier blessé s'est couché."] = "Watch the carrion birds: they circle where wounded game has lain down.",
@@ -286,7 +357,7 @@ MH_TEXTES = {
         ["Rôti du chasseur"] = "Hunter's Roast",
         ["SPÉCIMEN CAPTURÉ !"] = "SPECIMEN CAPTURED!",
         ["Sage des esprits"] = "Spirit Sage",
-        ["Sans mourir : "] = "Without dying: ",
+        ["Sans égratignure : "] = "Without a scratch: ",
         ["Sans une égratignure"] = "Without a Scratch",
         ["Serpent des marais, patient comme la vase. On le voit trop tard, jamais deux fois."] = "Swamp serpent, patient as mud. You see it too late, never twice.",
         ["Ses bonds laissent des traces profondes dans la poussière des Tarides."] = "Its leaps leave deep tracks in the Barrens dust.",
@@ -295,6 +366,7 @@ MH_TEXTES = {
         ["Sorcier de guerre"] = "Warlock",
         ["Spécimen capturé"] = "Specimen captured",
         ["Spécimen en enclos — "] = "Specimen in the pen — ",
+        ["Spécimen en enclos"] = "Specimen in the pen",
         ["Spécimen encore mal connu du carnet. Première prise : "] = "Specimen still poorly known to the journal. First kill: ",
         ["Spécimen non capturé"] = "Specimen not captured",
         ["Succès obtenus : |cffffd100"] = "Achievements earned: |cffffd100",
@@ -341,9 +413,9 @@ MH_TEXTES = {
         ["  |cffc9a24a•|r |cffffd100/hunt debug|r : diagnostic. |cffffd100/hunt armes|r : diagnostic des armes. |cffffd100/hunt export|r : liste « nom | id | zone » des découvertes (réconciliation Forever). |cffc9a24a•|r |cffffd100/hunt reset succes|missions|menagerie|carnet|r : remises à zéro ciblées. |cffffd100/hunt reset|r : tout effacer (irréversible)."] = "  |cffc9a24a•|r |cffffd100/hunt debug|r: diagnostics. |cffffd100/hunt armes|r: weapons diagnostic. |cffffd100/hunt export|r: \"name | id | zone\" list of discoveries (Forever reconciliation). |cffc9a24a•|r |cffffd100/hunt reset succes|missions|menagerie|carnet|r: targeted resets. |cffffd100/hunt reset|r: erase everything (irreversible).",
         ["  |cffc9a24a•|r |cffffd100/hunt icon custom/wow|r, |cffffd100/hunt parchment custom/wow|r : icône minimap, fond du carnet."] = "  |cffc9a24a•|r |cffffd100/hunt icon custom/wow|r, |cffffd100/hunt parchment custom/wow|r: minimap icon, journal background.",
         ["  |cffc9a24a•|r |cffffd100/hunt kill loose/strict|r : participation ou coup de grâce pour valider une prise."] = "  |cffc9a24a•|r |cffffd100/hunt kill loose/strict|r: participation or killing blow to validate a kill.",
-        ["  |cffc9a24a•|r |cffffd100/hunt test zone|banniere|chrono|en chasse|prime|menagerie|r : prévisualisations. |cffffd100/hunt test chemin <mp3>|r, |cffffd100/hunt test son <id>|r : essais audio."] = "  |cffc9a24a•|r |cffffd100/hunt test zone|banniere|chrono|en chasse|prime|menagerie|r: previews. |cffffd100/hunt test chemin <mp3>|r, |cffffd100/hunt test son <id>|r: audio tests.",
+        ["  |cffc9a24a•|r |cffffd100/hunt test zone|banniere|chrono|en chasse|prime|wow|tampon alliance|horde|icones|griffe|patte|mission|rumeur|succes|promotion|intrus|menagerie|r : prévisualisations. |cffffd100/hunt test chemin <mp3>|r, |cffffd100/hunt test son <id>|r : essais audio."] = "  |cffc9a24a•|r |cffffd100/hunt test zone|banniere|chrono|en chasse|prime|wow|tampon alliance|horde|icones|griffe|patte|mission|rumeur|succes|promotion|intrus|menagerie|r: previews. |cffffd100/hunt test chemin <mp3>|r, |cffffd100/hunt test son <id>|r: audio tests.",
         ["  |cffc9a24a•|r |cffffd100/hunt texui custom/wow|r : textures bandeau/zone/chrono."] = "  |cffc9a24a•|r |cffffd100/hunt texui custom/wow|r: banner/zone/timer textures.",
-        ["  |cffc9a24a•|r |cffffd100/hunt titre <famille>|r : naturaliste, chasseur, explorateur, traqueur."] = "  |cffc9a24a•|r |cffffd100/hunt titre <family>|r: naturalist, hunter, explorer, tracker.",
+        ["  |cffc9a24a•|r |cffffd100/hunt texui custom/wow|r : textures bandeau/zone/chrono. |cffffd100/hunt toast custom/wow|r : toast parchemin / plaque sombre."] = "  |cffc9a24a•|r |cffffd100/hunt texui custom/wow|r: banner/zone/timer textures. |cffffd100/hunt toast custom/wow|r: parchment toast / dark plate.",
         ["  |cffc9a24a•|r |cffffd100/hunt tuto|r : revoir le panneau de bienvenue. |cffffd100/hunt lisere <1-5|0>|r : couleur du liseré de rang."] = "  |cffc9a24a•|r |cffffd100/hunt tuto|r: show the welcome panel again. |cffffd100/hunt lisere <1-5|0>|r: rank trim color.",
         ["  |cffc9a24a•|r |cffffd100/hunt|r : ouvrir le carnet. |cffffd100/hunt gibier|contrats|succes|profil|cuisine|options|r : page directe."] = "  |cffc9a24a•|r |cffffd100/hunt|r: open the journal. |cffffd100/hunt gibier|contrats|succes|profil|cuisine|options|r: jump to a tab.",
         [" !|r (+20 points)"] = "!|r (+20 points)",
@@ -356,7 +428,7 @@ MH_TEXTES = {
         [" chasses, "] = " hunts, ",
         [" contrat(s) rempli(s)|r\n|cffa58b54Prochaine cible du jour : à minuit.|r"] = " contract(s) fulfilled|r\n|cffa58b54Next target of the day: at midnight.|r",
         [" en réserve)."] = " in reserve).",
-        [" est exténué — il droole sur ses pattes…"] = " is exhausted — drooling on its paws…",
+        [" est exténué — il bave sur ses pattes…"] = " is exhausted — drooling on its paws…",
         [" est transféré dans l'enclos (onglet Ménagerie)."] = " is transferred to the pen (Menagerie tab).",
         [" points avant « "] = " points before \" ",
         [" points de chasse"] = " hunt points",
@@ -372,7 +444,7 @@ MH_TEXTES = {
         [" rejoint l'enclos (Ménagerie)."] = " joins the pen (Menagerie).",
         [" retiré du carnet."] = " removed from the journal.",
         [" |cffff7a1a— gâté au miel !|r"] = " |cffff7a1a— honeyed and pampered!|r",
-        [" » (nom de zone inconnu du client ?)."] = "\" (zone name unknown to this client?).",
+        [" »."] = "\".",
         [" — prise="] = " — kill=",
         [", contrat="] = ", contract=",
         [", points="] = ", points=",
@@ -401,11 +473,62 @@ MH_TEXTES = {
         ["|cff8a6d3bSélectionne un spécimen capturé pour le nourrir.|r"] = "|cff8a6d3bSelect a captured specimen to feed it.|r",
         ["|cffa0ff50TERMINÉE "] = " |cffa0ff50COMPLETED ",
         ["|cffa58b54L'enclos est vide — le régisseur dort.|r"] = "|cffa58b54The pen is empty — the keeper sleeps.|r",
+        ["|cff4a3210Les enclos sont vides — le régisseur dort.|r"] = "|cff4a3210The pens are empty — the keeper sleeps.|r",
+        ["|cffffd100Les enclos sont vides — le régisseur dort.|r"] = "|cffffd100The pens are empty — the keeper sleeps.|r",
         ["|cffa58b54Le carnet du chasseur : quatre repères de vieux chasseur|r"] = "|cffa58b54The hunter's journal: four marks of an old hunter|r",
         ["|cffa58b54RÉGION DE CHASSE|r"] = "|cffa58b54HUNTING REGION|r",
         ["|cffc9a24aIngrédients :|r "] = " |cffc9a24aIngredients:|r ",
         ["|cffc9a24aLa guilde des chasseurs salue|r"] = "|cffc9a24aThe hunters' guild salutes|r",
         ["|cffc9a24aRepas préparé :|r"] = "|cffc9a24aMeal prepared:|r",
+        ["Le repas préparé"] = "The prepared meal",
+        [" a refroidi — le repas préparé est perdu à la mort du chasseur.|r"] = " has gone cold — the prepared meal is lost on the hunter's death.|r",
+        -- Rumeurs de guilde (missions cachées)
+        ["La chasse à la cuillère"] = "The Spoon Hunt",
+        ["Un nain, paraît-il, a dépiauté un worg à la cuillère. Toi, tu as une dague : fais honneur à la légende."] = "A dwarf, so they say, skinned a worg with a spoon. You have a dagger: do the legend justice.",
+        ["Abats n'importe quel gibier du carnet avec une dague."] = "Slay any journal monster with a dagger.",
+        ["Le récit du nain, illustré"] = "The dwarf's tale, illustrated",
+        ["Le concert de minuit"] = "The Midnight Concert",
+        ["Les grillons jouent, la guilde ronfle. Toi, tu chasses quand les tavernes ferment — la nuit t'appartient."] = "The crickets play, the guild snores. You hunt when the taverns close — the night is yours.",
+        ["Réussis une prise entre minuit et 4h du matin (heure du jeu)."] = "Complete a kill between midnight and 4am (game time).",
+        ["Bougie de veille du guetteur"] = "The watcher's vigil candle",
+        ["Le conte de la neige"] = "The Snow Tale",
+        ["Il neigeait. Il ne neige plus. Il neigera encore : prends ton gibier avant que la page ne tourne."] = "It was snowing. It is no more. It will snow again: take your game before the page turns.",
+        ["Réussis une prise sous la neige."] = "Complete a kill in the snow.",
+        ["Flocons pressés dans le carnet"] = "Snowflakes pressed in the journal",
+        ["Le sort en baguette"] = "The Wand Wager",
+        ["Un magicien a parié qu'aucun gibier du carnet ne tomberait sous une baguette. La guilde n'aime pas perdre les paris."] = "A mage bet no journal monster would ever fall to a wand. The guild hates losing bets.",
+        ["Abats un gibier du carnet avec une baguette."] = "Slay a journal monster with a wand.",
+        ["Le pari du magicien, au montant entier"] = "The mage's wager, paid in full",
+        ["La poudre mouillée"] = "Wet Powder",
+        ["Pluie sur les mèches, gibier dans les fourrés. Un vrai chasseur attend l'éclair pour tirer."] = "Rain on the powder, game in the thickets. A true hunter waits for the lightning to fire.",
+        ["Abats un gibier du carnet avec une arme à feu, sous la pluie."] = "Slay a journal monster with a gun, in the rain.",
+        ["Poudre tenue au sec, un miracle"] = "Powder kept dry, a miracle",
+        ["Aveugle et sec"] = "Blind and Dry",
+        ["La pluie colle les cils, la bête griffe l'air. Reviens sans une goutte de ton sang sur l'équipement."] = "Rain on your lashes, the beast claws the air. Come back without a drop of your blood on your gear.",
+        ["Réussis une prise sous la pluie sans perdre un seul point de vie."] = "Complete a kill in the rain without losing a single point of health.",
+        ["Ciré de l'ancien de la guilde"] = "The guild elder's oilskin",
+        ["Le pari du fou"] = "The Madman's Bet",
+        ["Plus haut niveau que toi, heures les plus noires, aucun témoin. La guilde prend les paris — ne perds pas."] = "Higher level than you, blackest hours, no witnesses. The guild takes bets — don't lose.",
+        ["Prends un gibier de niveau supérieur au tien, entre minuit et 5h du matin."] = "Kill game above your level, between midnight and 5am.",
+        ["Les dés du comptoir, pipés"] = "The counter's dice, loaded",
+        ["Poings contre crocs"] = "Fists against Fangs",
+        ["On a vu des poings d'arène finir des traques entières. La guilde veut voir ça de ses propres yeux."] = "Arena fists have finished whole stalks before. The guild wants to see it with its own eyes.",
+        ["Abats un gibier du carnet à mains nues (armes de pugilat)."] = "Slay a journal monster bare-handed (fist weapons).",
+        ["Bandages de la main droite"] = "Right-hand bandages",
+        ["Le duel du sommet"] = "The Summit Duel",
+        ["Le dernier murmure de la guilde ne se mérite qu'au sommet du rang : plus grand que toi, et pas une égratignure."] = "The guild's last whisper is earned only at the top rank: bigger than you, and not a scratch.",
+        ["Prends un gibier de niveau supérieur au tien sans perdre un seul point de vie."] = "Kill game above your level without losing a single point of health.",
+        ["Le dernier murmure de la guilde"] = "The guild's last whisper",
+        ["Rumeur élucidée"] = "Rumor solved",
+        ["|cffa0ff50ELUCIDÉE "] = "|cffa0ff50SOLVED ",
+        ["|cffffd100[MH Hunt]|r |cffb97affUne rumeur étrange court dans la guilde…|r Onglet Missions, chasseur — on ne répète pas ce genre de choses."] = "|cffffd100[MH Hunt]|r |cffb97affA strange rumor runs through the guild…|r Missions tab, hunter — this sort of thing isn't repeated.",
+        ["|cffffd100[MH Hunt]|r |cffb97affRumeur acceptée :|r "] = "|cffffd100[MH Hunt]|r |cffb97affRumor accepted:|r ",
+        ["|cffffd100[MH Hunt]|r |cffb97affRumeur élucidée :|r "] = "|cffffd100[MH Hunt]|r |cffb97affRumor solved:|r ",
+        [" — "] = " — ",
+        ["Accepter la rumeur"] = "Accept the rumor",
+        ["|cffb97affToutes les rumeurs ont été élucidées — la guilde applaudit, chasseur.|r"] = "|cffb97affAll rumors have been solved — the guild applauds, hunter.|r",
+        ["|cffb97affDes chasses étranges courent les tavernes… mais la guilde ne murmure qu'aux rangs élevés.|r Rang requis : |cffffff00"] = "|cffb97affStrange hunts run through the taverns… but the guild only whispers to the higher ranks.|r Required rank: |cffffff00",
+        ["|cffb97affAucune rumeur aujourd'hui — la guilde murmure à sa manière, revenez demain.|r"] = "|cffb97affNo rumor today — the guild whispers in its own way, come back tomorrow.|r",
         ["|cffc9a24aBourse à objets :|r"] = "|cffc9a24aItem pouch:|r",
         ["|cffc9a24aSensibilités :|r"] = "|cffc9a24aWeaknesses:|r",
         ["|cffc9a24aSensibilités :|r inconnues"] = "|cffc9a24aWeaknesses:|r unknown",
@@ -432,14 +555,13 @@ MH_TEXTES = {
         ["|cffffd100Titres de chasseur|r"] = "|cffffd100Hunter titles|r",
         ["|cffffd100Zone actuelle : |r"] = "|cffffd100Current zone: |r",
         ["|cffffd100[MH Hunt]|r %d entrées exportées."] = "|cffffd100[MH Hunt]|r %d entries exported.",
-        ["|cffffd100[MH Hunt]|r /hunt titre naturaliste | chasseur | explorateur | traqueur"] = "|cffffd100[MH Hunt]|r /hunt titre naturaliste | chasseur | explorateur | traqueur",
         ["|cffffd100[MH Hunt]|r Ambiance sonore du jeu réactivée (un vieux mute de l'addon traînait dans la config du client)."] = "|cffffd100[MH Hunt]|r Game ambience re-enabled (an old addon mute was lingering in the client config).",
         ["|cffffd100[MH Hunt]|r Bannière activée."] = "|cffffd100[MH Hunt]|r Banner enabled.",
         ["|cffffd100[MH Hunt]|r Bannière désactivée."] = "|cffffd100[MH Hunt]|r Banner disabled.",
         ["|cffffd100[MH Hunt]|r Base réinitialisée."] = "|cffffd100[MH Hunt]|r Database reset.",
         ["|cffffd100[MH Hunt]|r Bête inconnue du carnet : « "] = " |cffffd100[MH Hunt]|r Beast unknown to the journal: \" ",
         ["|cffffd100[MH Hunt]|r Carte de chasseur envoyée à |cffffff00"] = "|cffffd100[MH Hunt]|r Hunter card sent to |cffffff00",
-        ["|cffffd100[MH Hunt]|r Carte de chasseur — |cffffff00"] = "|cffffd100[MH Hunt]|r Hunter card — |cffffff00",
+        ["|cffffd100[MH Hunt]|r Carte de chasseur — "] = "|cffffd100[MH Hunt]|r Hunter card — ",
         ["|cffffd100[MH Hunt]|r Ce gibier n'a jamais été abattu — chasse-le d'abord."] = "|cffffd100[MH Hunt]|r This game has never been slain — hunt it first.",
         ["|cffffd100[MH Hunt]|r Ce spécimen n'est pas en enclos."] = "|cffffd100[MH Hunt]|r This specimen is not in the pen.",
         ["|cffffd100[MH Hunt]|r Cible du jour déjà en contrat actif."] = "|cffffd100[MH Hunt]|r Target of the day already active as contract.",
@@ -475,17 +597,49 @@ MH_TEXTES = {
         ["|cffffd100[MH Hunt]|r Succès débloqué : |cffffff00"] = "|cffffd100[MH Hunt]|r Achievement unlocked: |cffffff00",
         ["|cffffd100[MH Hunt]|r Test : +20 viandes, +10 miels, 8 spécimens en enclos (dont un affamé et un gâté)."] = "|cffffd100[MH Hunt]|r Test: +20 meats, +10 honeys, 8 specimens in the pen (one hungry, one pampered).",
         ["|cffffd100[MH Hunt]|r Test : annonce de zone affichée."] = "|cffffd100[MH Hunt]|r Test: zone announcement shown.",
+        ["|cffffd100LE SERMENT DU CHASSEUR|r"] = "|cffffd100THE HUNTER'S OATH|r",
+        ["|cffa58b54Chaque prise validée demande un choix : comment comptent vos trophées ?|r"] = "|cffa58b54Every validated kill demands a choice: how do your trophies count?|r",
+        ["|cffff8844La voie du compagnon|r — chasse souple"] = "|cffff8844The packmate's way|r — relaxed hunts",
+        ["« Le gibier est tombé sous les crocs de la meute — et la meute, c'était vous. »"] = "« The beast fell to the pack's fangs — and you were the pack. »",
+        ["|cffc9a24aImplique :|r participer au combat suffit (dégâts ou soins apportés), même sans porter le coup fatal. Idéal en groupe."] = "|cffc9a24aMeans:|r taking part in the fight is enough (damage or healing dealt), even without landing the killing blow. Ideal in groups.",
+        ["|cff66ccffLa voie du loup solitaire|r — chasse stricte"] = "|cff66ccffThe lone wolf's way|r — strict hunts",
+        ["« La traque se termine par VOTRE lame, ou elle ne compte pas. »"] = "« The hunt ends by YOUR blade, or it does not count. »",
+        ["|cffc9a24aImplique :|r seul votre coup de grâce valide la prise. En groupe, la bête doit mourir sous votre main. Pour chasseurs exigeants."] = "|cffc9a24aMeans:|r only your killing blow validates the kill. In groups, the beast must die by your hand. For demanding hunters.",
+        ["|cff88ff88• Votre voie actuelle|r"] = "|cff88ff88• Your current way|r",
+        ["|cffa58b54La voie se change à tout moment : |cffffd100/hunt kill loose/strict|r"] = "|cffa58b54Your way can be changed anytime: |cffffd100/hunt kill loose/strict|r",
+        ["Plus tard"] = "Later",
+        ["Prononcer le serment !"] = "Swear the oath!",
+        ["|cffffd100[MH Hunt]|r Choisissez d'abord une voie pour prononcer le serment."] = "|cffffd100[MH Hunt]|r Pick a way first to swear the oath.",
+        ["|cffffd100[MH Hunt]|r Serment prononcé : |cffff8844la voie du compagnon|r (chasse souple — la participation compte)."] = "|cffffd100[MH Hunt]|r Oath sworn: |cffff8844the packmate's way|r (relaxed hunts — participation counts).",
+        ["|cffffd100[MH Hunt]|r Serment prononcé : |cff66ccffla voie du loup solitaire|r (chasse stricte — votre coup de grâce, et rien d'autre)."] = "|cffffd100[MH Hunt]|r Oath sworn: |cff66ccffthe lone wolf's way|r (strict hunts — your killing blow, nothing else).",
+        ["|cffff8844voie du compagnon|r"] = "|cffff8844packmate's way|r",
+        ["|cff66ccffvoie du loup solitaire|r"] = "|cff66ccfflone wolf's way|r",
+        [" — "] = " — ",
+        ["Voie du chasseur"] = "Hunter's way",
+        ["Comment comptent vos prises : participation (souple) ou coup de grâce (strict)."] = "How your kills count: participation (relaxed) or killing blow (strict).",
+        ["Clic : revoir le serment et changer de voie."] = "Click: replay the oath and change your way.",
+        ["|cffffd100[MH Hunt]|r Test : toast couronne d'or (griffe)."] = "|cffffd100[MH Hunt]|r Test: gold crown toast (claw icon).",
+        ["|cffffd100[MH Hunt]|r Test : toast spécimen capturé (patte)."] = "|cffffd100[MH Hunt]|r Test: specimen captured toast (paw icon).",
+        ["|cffffd100[MH Hunt]|r Test : toast mission (icône carrée de repli)."] = "|cffffd100[MH Hunt]|r Test: mission toast (square fallback icon).",
+        ["|cffffd100[MH Hunt]|r Test : toast rumeur élucidée (icône carrée de repli)."] = "|cffffd100[MH Hunt]|r Test: rumor solved toast (square fallback icon).",
+        ["|cffffd100[MH Hunt]|r Test : toast succès (icône carrée de repli)."] = "|cffffd100[MH Hunt]|r Test: achievement toast (square fallback icon).",
+        ["|cffffd100[MH Hunt]|r Test : toast promotion (comme un succès — parchemin)."] = "|cffffd100[MH Hunt]|r Test: guild promotion toast (achievement style — parchment).",
+        ["|cffffd100[MH Hunt]|r Test : toast intrus dans l'enclos (message simple, sans médaillon)."] = "|cffffd100[MH Hunt]|r Test: pen intruder toast (simple message, no medallion).",
         ["|cffffd100[MH Hunt]|r Test : bandeau En chasse éphémère (4 s), puis mini chrono en coin."] = "|cffffd100[MH Hunt]|r Test: ephemeral hunt banner (4 s), then mini timer in the corner.",
         ["|cffffd100[MH Hunt]|r Test : bannière centrale affichée."] = "|cffffd100[MH Hunt]|r Test: center banner shown.",
         ["|cffffd100[MH Hunt]|r Test : chrono lancé (10 s), fondu à l'entrée et à la sortie."] = "|cffffd100[MH Hunt]|r Test: timer running (10 s), fade in and out.",
         ["|cffffd100[MH Hunt]|r Test : cible du jour relancée (toast + plaque Accueil)."] = "|cffffd100[MH Hunt]|r Test: target of the day refreshed (toast + Home plate).",
+        ["|cffffd100[MH Hunt]|r Test : toast validation affiché (toast1.tga)."] = "|cffffd100[MH Hunt]|r Test: validation toast shown (toast1.tga).",
+        ["|cffffd100[MH Hunt]|r Test : toast sombre affiché (mode « wow », sans changer la config)."] = "|cffffd100[MH Hunt]|r Test: dark toast shown ('wow' style, config untouched).",
+        ["|cffffd100[MH Hunt]|r Test : toast avec tampon "] = "|cffffd100[MH Hunt]|r Test: toast with ",
         ["|cffffd100[MH Hunt]|r Test : enclos vidé (l'apprivoisement reste testable, les fiches sont conservées)."] = "|cffffd100[MH Hunt]|r Test: pen emptied (taming still testable, cards kept).",
         ["|cffffd100[MH Hunt]|r Titre affiché : « "] = " |cffffd100[MH Hunt]|r Displayed title: \" ",
         ["|cffffd100[MH Hunt]|r Tous les compteurs de prises remis à zéro (fiches, trophées et points conservés)."] = "|cffffd100[MH Hunt]|r All kill counters reset to zero (cards, trophies and points kept).",
         ["|cffffd100[MH Hunt]|r Traçage des détections de mort : |cffffff00"] = "|cffffd100[MH Hunt]|r Death detection tracing: |cffffff00",
         ["|cffffd100[MH Hunt]|r Trophée prélevé : "] = " |cffffd100[MH Hunt]|r Trophy taken: ",
+        ["|cffffd100[MH Hunt]|r |cff888888Découpe manquée : le morceau s'est abîmé.|r"] = " |cffffd100[MH Hunt]|r |cff888888Carve missed: the piece was ruined.|r",
         ["|cffffd100[MH Hunt]|r Usage : /hunt lisere <1-5> (0 = rang réel)."] = "|cffffd100[MH Hunt]|r Usage: /hunt lisere <1-5> (0 = real rank).",
-        ["|cffffd100[MH Hunt]|r chargé. /hunt pour ouvrir le carnet. "] = " |cffffd100[MH Hunt]|r loaded. /hunt to open the journal. ",
+        [" chargé. /hunt pour ouvrir le carnet. "] = " loaded. /hunt to open the journal. ",
         ["|cffffd100[MH Hunt]|r |cff8a6d3bMauvais temps pour la piste : garde l'œil sur ton gibier, pas sur le ciel.|r"] = "|cffffd100[MH Hunt]|r |cff8a6d3bBad weather for tracking: keep your eye on your game, not the sky.|r",
         ["|cffffd100[MH Hunt]|r |cff8a9bb0La météo tourne :|r "] = " |cffffd100[MH Hunt]|r |cff8a9bb0The weather turns:|r ",
         ["|cffffd100[MH Hunt]|r |cffa0ff50Chasse réussie : "] = " |cffffd100[MH Hunt]|r |cffa0ff50Hunt successful: ",
@@ -516,6 +670,25 @@ MH_TEXTES = {
         ["Sacré"] = "Holy",
         ["Félin"] = "Feline",
         ["Araignée"] = "Spider",
+        ["Hyène"] = "Hyena",
+        ["Serpent des vents"] = "Wind Serpent",
+        ["Loup"] = "Wolf",
+        ["Harpie"] = "Harpy",
+        ["Scorpide"] = "Scorpid",
+        ["Échassier"] = "Tallstrider",
+        ["Zèvre"] = "Zhevra",
+        ["Silithide"] = "Silithid",
+        ["Charognard"] = "Carrion Bird",
+        ["Tortue"] = "Turtle",
+        ["Élémentaire"] = "Elemental",
+        ["Chauve-souris"] = "Bat",
+        ["Hibou"] = "Owl",
+        ["Yéti"] = "Yeti",
+        ["Griffon"] = "Gryphon",
+        ["Kodo"] = "Kodo",
+        ["Gorille"] = "Gorilla",
+        ["Ours"] = "Bear",
+        ["Rare"] = "Rare",
         ["tempête de sable"] = "sandstorm",
         ["pluie de feu"] = "firestorm",
         ["ciel couvert"] = "overcast sky",
@@ -552,6 +725,22 @@ local function InitDB()
         end
     end
     DB = LaChasseDB
+    MHH_DB = DB -- pont Menagerie.lua (v0.67)
+    -- v0.119 : RENCONTRES — le succès « découverte » compte désormais la
+    -- PREMIÈRE RENCONTRE d'un rare (avec un data complet, plus aucun rare
+    -- « inconnu » ne peut être découvert : le succès était mort). Les rares
+    -- déjà chassés/découverts comptent comme rencontrés (première prise).
+    if DB.rencontres == nil then DB.rencontres = {} end
+    if DB.chasses then
+        for nomR in pairs(DB.chasses) do
+            if DB.rencontres[nomR] == nil then DB.rencontres[nomR] = 1 end
+        end
+    end
+    if DB.decouverts then
+        for nomR in pairs(DB.decouverts) do
+            if DB.rencontres[nomR] == nil then DB.rencontres[nomR] = 1 end
+        end
+    end
     -- Migration : les prises antérieures étaient comptées sous la CLASSE
     -- « Arme » (bug d'indice GetItemInfo : la sous-classe est en 8e
     -- position, pas 7e). On les réattribue à la sous-classe de l'arme
@@ -712,7 +901,6 @@ MHH_CATALOGUE = {
     ["Aean Swiftriver"] = "Les Tarides",
     -- Malcin cendrecœur : absent de ForeverDB (rares ≤ 30) — retiré,
     -- à réactiver s'il est vu en jeu
-    ["Ambassadeur Sanglerage"] = "Les Tarides",
     ["Azzere la Lame-des-cieux"] = "Les Tarides",
     ["Boahn"] = "Les Tarides",
     ["Brokespear"] = "Les Tarides",
@@ -726,8 +914,6 @@ MHH_CATALOGUE = {
     ["Ingénieur Tourniquet"] = "Les Tarides",
     ["Contremaître Grills"] = "Les Tarides",
     -- Gukk'rok & Swinegart : Mulgore d'après ForeverDB (pas Les Tarides)
-    ["Géoprêtre Gukk'rok"] = "Mulgore",
-    ["Swinegart Peau-de-lance"] = "Mulgore",
     ["Gesharahan"] = "Les Tarides",
     ["Hagg Fléau-des-taurens"] = "Les Tarides",
     ["Hannah Feuillelame"] = "Les Tarides",
@@ -764,9 +950,7 @@ MHH_CATALOGUE = {
     ["Patte-de-chêne"] = "Orneval",
     ["Prince Raze"] = "Orneval",
     ["Rorgish Jowl"] = "Orneval",
-    ["Terrowulf Chef-de-meute"] = "Orneval",
     ["Ursol'lok"] = "Orneval",
-    ["Slitherblade maudit"] = "Désolace",
     ["Crusty"] = "Désolace",
     ["Centaure maudit"] = "Désolace",
     ["Glousseur"] = "Désolace",
@@ -779,18 +963,17 @@ MHH_CATALOGUE = {
     -- Harb Foulmountain : Les Tarides d'après ForeverDB (pas Mille Pointes)
     ["Harb Montagne-fétide"] = "Les Tarides",
     ["Rasoir-de-coeur"] = "Mille Pointes",
-    ["Ironeye l'Invincible"] = "Mille Pointes",
+    ["Ferregard l'Invincible"] = "Mille Pointes",
     ["Ravageur silithide"] = "Mille Pointes",
     ["Dard-vil"] = "Mille Pointes",
-    ["Brimgore"] = "Marécage d'Âprefange",
+    ["Soufresang"] = "Marécage d'Âprefange",
     -- Mor'Ladim : Duskwood (mal classé aux Carmines avant)
     ["Mor'Ladim"] = "Bois de la Pénombre",
-    ["Burgle Eye"] = "Marécage d'Âprefange",
-    ["Veuve de la Brume-noire"] = "Marécage d'Âprefange",
-    ["Dart"] = "Marécage d'Âprefange",
-    ["Drogoth le Rôdeur"] = "Marécage d'Âprefange",
+    ["Pique-les-yeux"] = "Marécage d'Âprefange",
+    ["Veuve de Sombrebrume"] = "Marécage d'Âprefange",
+    ["Flèche"] = "Marécage d'Âprefange",
+    ["Dorgoth le Vagabond"] = "Marécage d'Âprefange",
     ["Hayoc"] = "Marécage d'Âprefange",
-    ["Seigneur Pêche-à-la-ligne"] = "Marécage d'Âprefange",
     ["Ver-de-limace"] = "Marécage d'Âprefange",
     ["Écaille-déchirée"] = "Marécage d'Âprefange",
     ["La Pourriture"] = "Marécage d'Âprefange",
@@ -799,24 +982,21 @@ MHH_CATALOGUE = {
     ["Cyclok le Fou"] = "Tanaris",
     ["Oiseau de feu supérieur"] = "Tanaris",
     ["Haarka le Vorace"] = "Tanaris",
-    ["Jin'Zallah le Porte-sable"] = "Tanaris",
+    ["Jin'Zallah Porte-sable"] = "Tanaris",
     ["Kregg Keelhaul"] = "Tanaris",
-    ["Patte-ampoule meurtrière"] = "Tanaris",
     ["Omgorn l'Égaré"] = "Tanaris",
     ["Soriid le Dévoreur"] = "Tanaris",
     ["Chef de guerre Krazzilak"] = "Tanaris",
-    ["Antilus le Planieur"] = "Féralas",
+    ["Antilus le Planeur"] = "Féralas",
     ["Arash-ethis"] = "Féralas",
     ["Bloodroar le Traqueur"] = "Féralas",
     ["Tête-de-diamant"] = "Féralas",
-    ["Gnarl Frère-des-feuilles"] = "Féralas",
     ["Dame Szallah"] = "Féralas",
     ["Vieux Ventre-grison"] = "Féralas",
     ["Qirot"] = "Féralas",
-    ["Grondeur"] = "Féralas",
+    ["Grogneur"] = "Féralas",
     ["Sablonneux"] = "Gangrebois",
-    ["Alshirr Souffle-de-fléau"] = "Gangrebois",
-    ["Hurlement de mort"] = "Gangrebois",
+    ["Alshirr Souffléau"] = "Gangrebois",
     ["Dessecus"] = "Gangrebois",
     ["Immolatus"] = "Gangrebois",
     ["Mongress"] = "Gangrebois",
@@ -826,11 +1006,10 @@ MHH_CATALOGUE = {
     ["Mère de couvée Zavas"] = "Cratère d'Un'Goro",
     ["Gruff"] = "Cratère d'Un'Goro",
     ["Roi Mosh"] = "Cratère d'Un'Goro",
-    ["Matriarche Croc-rasoir"] = "Cratère d'Un'Goro",
     ["Uhk'loc"] = "Cratère d'Un'Goro",
     ["Gretheer"] = "Silithus",
     ["Grubthor"] = "Silithus",
-    ["Huricanian"] = "Silithus",
+    ["Ouraganien"] = "Silithus",
     ["Krellack"] = "Silithus",
     ["Lapress"] = "Silithus",
     ["Rex Ashil"] = "Silithus",
@@ -839,21 +1018,17 @@ MHH_CATALOGUE = {
     ["Zora"] = "Silithus",
     ["Antilos"] = "Azshara",
     ["Gardien Rageroar"] = "Azshara",
-    ["Général Fangferror"] = "Azshara",
     ["Dame Sesspira"] = "Azshara",
-    ["Magistère Heaume-faucon"] = "Azshara",
     ["Maître Feardred"] = "Azshara",
     ["Monnos l'Ancien"] = "Azshara",
-    ["Écaillebarbe"] = "Azshara",
     ["L'Evalcharr"] = "Azshara",
     ["Fantôme de Varo'then"] = "Azshara",
     ["Azurous"] = "Hiverpré",
     ["Général Colbatann"] = "Hiverpré",
-    ["Grizzle Patte-des-neiges"] = "Hiverpré",
     ["Kashoch le Ravageur"] = "Hiverpré",
     ["Mezzir le Hurleur"] = "Hiverpré",
     ["Rak'shiri"] = "Hiverpré",
-    ["Sian-Rotam"] = "Hiverpré",
+    ["Sian-Rotam"] = "Berceau-de-l'Hiver",
     -- Royaumes de l'Est
     ["Vieux Florent"] = "Bois de la Pénombre",
     ["Porc-épic mangeur d'hommes"] = "Bois de la Pénombre",
@@ -903,7 +1078,7 @@ MHH_CATALOGUE = {
     ["Chercheur Aqualon"] = "Les Carmines",
     ["Snarlflare"] = "Les Carmines",
     ["Squiddic"] = "Les Carmines",
-    ["Commandant Felstrom"] = "Bois de la Pénombre",
+    ["Commandant Gangretrombe"] = "Bois de la Pénombre",
     ["Fenros"] = "Bois de la Pénombre",
     ["Seigneur Malathrom"] = "Bois de la Pénombre",
     -- Lupos : Bois de la Pénombre d'après ForeverDB (pas Bois de la Pénombre)
@@ -938,16 +1113,12 @@ MHH_CATALOGUE = {
     ["Scargil"] = "Contreforts de Hautebrande",
     ["Tamra Stormpike"] = "Contreforts de Hautebrande",
     ["Araga"] = "Montagnes d'Alterac",
-    ["Benj l'Aigri"] = "Montagnes d'Alterac",
-    ["Gravis Noeud-coulant"] = "Montagnes d'Alterac",
     ["Jimmy le Saignant"] = "Montagnes d'Alterac",
     ["Lo'Grosh"] = "Montagnes d'Alterac",
     ["Narillasanz"] = "Montagnes d'Alterac",
-    ["Skhowl"] = "Montagnes d'Alterac",
+    ["Grybou"] = "Montagnes d'Alterac",
     ["Furie-de-pierre"] = "Montagnes d'Alterac",
     ["Darbel Montrose"] = "Hautes-terres d'Arathi",
-    ["Ventre-immonde"] = "Hautes-terres d'Arathi",
-    ["Géomancien Silex-dague"] = "Hautes-terres d'Arathi",
     ["Kovork"] = "Hautes-terres d'Arathi",
     ["Molok le Broyeur"] = "Hautes-terres d'Arathi",
     ["Nimar le Tueur"] = "Hautes-terres d'Arathi",
@@ -963,47 +1134,43 @@ MHH_CATALOGUE = {
     ["Roloch"] = "Vallée de Strangleronce",
     ["Ventre-écailleux"] = "Vallée de Strangleronce",
     ["Verifonix"] = "Vallée de Strangleronce",
-    ["Grosse patte"] = "Marais des chagrins",
-    ["Fingat"] = "Marais des chagrins",
-    ["Gilmorian"] = "Marais des chagrins",
-    ["Capitaine-seigneur Wyrmak"] = "Marais des chagrins",
-    ["Chef des Perdus"] = "Marais des chagrins",
-    ["Cuisinier des Perdus"] = "Marais des chagrins",
-    ["Molt Thorn"] = "Marais des chagrins",
+    ["Grosse patte"] = "Marais des Chagrins",
+    ["Fingat"] = "Marais des Chagrins",
+    ["Gilmorian"] = "Marais des Chagrins",
+    ["Chef des Perdus"] = "Marais des Chagrins",
+    ["Cuisinier des Perdus"] = "Marais des Chagrins",
+    ["Rougeronce"] = "Marais des Chagrins",
     ["7:XT"] = "Terres ingrates",
     ["Anathemus"] = "Terres ingrates",
-    ["Croc-Cassé"] = "Terres ingrates",
-    ["Rumbler"] = "Terres ingrates",
+    ["Grondeur du désert"] = "Terres ingrates",
     ["Commandant de l'Ombreforge"] = "Terres ingrates",
     ["Golem de siège"] = "Terres ingrates",
     ["Golem de guerre"] = "Terres ingrates",
     ["Zaricotl"] = "Terres ingrates",
-    ["Golem de guerre défectueux"] = "Gorge des Vents brûlants",
+    ["Golem de guerre défaillant"] = "Gorge des Vents brûlants",
     ["Généralissime Mastrogonde"] = "Gorge des Vents brûlants",
     ["Rekk'tilac"] = "Gorge des Vents brûlants",
-    ["Scald"] = "Gorge des Vents brûlants",
+    ["Brûlar"] = "Gorge des Vents brûlants",
     ["Shleipnarr"] = "Gorge des Vents brûlants",
-    ["Maître des esclaves Coeur-noir"] = "Gorge des Vents brûlants",
-    ["Smoldar"] = "Gorge des Vents brûlants",
-    ["Fourbasse"] = "Steppes ardentes",
-    ["Gueule-de-mort"] = "Steppes ardentes",
-    ["Gorgon'och"] = "Steppes ardentes",
-    ["Gruklash"] = "Steppes ardentes",
-    ["Hahk'Zor"] = "Steppes ardentes",
-    ["Hematos"] = "Steppes ardentes",
-    ["Ravageur défectueux"] = "Steppes ardentes",
-    ["Étincelle-terreur"] = "Steppes ardentes",
-    ["Thauris Balgarr"] = "Steppes ardentes",
-    ["Volchan"] = "Steppes ardentes",
+    ["Fumar"] = "Gorge des Vents brûlants",
+    ["Fourbasse"] = "Steppes Ardentes",
+    ["Gorgon'och"] = "Steppes Ardentes",
+    ["Gruklash"] = "Steppes Ardentes",
+    ["Hahk'Zor"] = "Steppes Ardentes",
+    ["Hematos"] = "Steppes Ardentes",
+    ["Ravageur défectueux"] = "Steppes Ardentes",
+    ["Étincelle-terreur"] = "Steppes Ardentes",
+    ["Thauris Balgarr"] = "Steppes Ardentes",
+    ["Volchan"] = "Steppes Ardentes",
     ["Akubar le Voyant"] = "Terres foudroyées",
     ["Clack le Ravageur"] = "Terres foudroyées",
     ["Oeil-de-mort"] = "Terres foudroyées",
-    ["Dreadscorn"] = "Terres foudroyées",
+    ["Dériseffroi"] = "Terres foudroyées",
     ["Grunter"] = "Terres foudroyées",
     ["Magronos l'Inflexible"] = "Terres foudroyées",
     ["Mojo le Tordu"] = "Terres foudroyées",
     ["Ravage"] = "Terres foudroyées",
-    ["Spiteflayer"] = "Terres foudroyées",
+    ["Ecorchebile"] = "Terres foudroyées",
     ["Murmure-effroi"] = "Maleterres de l'Ouest",
     ["Crinière-immonde"] = "Maleterres de l'Ouest",
     ["Seigneur Maldazzar"] = "Maleterres de l'Ouest",
@@ -1013,23 +1180,18 @@ MHH_CATALOGUE = {
     ["Juge écarlate"] = "Maleterres de l'Ouest",
     ["Forgeron écarlate"] = "Maleterres de l'Ouest",
     ["La Carcasse"] = "Maleterres de l'Ouest",
-    ["Duggan Marteau-hardi"] = "Maleterres de l'Est",
+    ["Duggan Wildhammer"] = "Maleterres de l'Est",
     ["Gish l'Immobile"] = "Maleterres de l'Est",
     ["Hed'mush le Pourrissant"] = "Maleterres de l'Est",
     ["Grand général Abbendis"] = "Maleterres de l'Est",
-    ["Seigneur Faux-sombre"] = "Maleterres de l'Est",
     ["Contremaître nérubien"] = "Maleterres de l'Est",
-    ["Seigneur traqueur Lance-faucon"] = "Maleterres de l'Est",
     ["Seigneur de guerre Thresh'jin"] = "Maleterres de l'Est",
     ["Zul'Brin Rameau-tordu"] = "Maleterres de l'Est",
     ["Grimungous"] = "Les Hinterlands",
     ["Dos-de-fer"] = "Les Hinterlands",
     ["Jalinde Drake-d'été"] = "Les Hinterlands",
     ["Mith'rethis l'Enchanteur"] = "Les Hinterlands",
-    ["Vieux Sauteur-de-falaises"] = "Les Hinterlands",
-    ["Razortalon"] = "Les Hinterlands",
-    ["Retherokk le Berserker"] = "Les Hinterlands",
-    ["Le Reak"] = "Les Hinterlands",
+    ["Trancheserre"] = "Les Hinterlands",
     ["Witherheart le Traqueur"] = "Les Hinterlands",
     ["Zul'arek Haine-ramée"] = "Les Hinterlands",
     ["Casses-Cornes"] = "Gorges des Chants éternels",
@@ -1058,8 +1220,11 @@ MHH_SUCCES = {
     { id = "butin",      cat = L("Le naturaliste"),  tex = "Ability_Hunter_AimedShot",     nom = L("Curieux de butin"),      desc = L("Looter un objet bleu (ou mieux) sur un monstre du carnet") },
     -- Exploration
     { id = "globe",      cat = "Exploration",     tex = "Spell_Arcane_StarFire",        nom = "Globe-trotter",         desc = L("Chasses réussies dans 10 zones différentes") },
-    { id = "decouverte", cat = "Exploration",     tex = "Spell_Arcane_StarFire",        nom = L("Première découverte"),   desc = L("Découvrir un rare inconnu (mode auto)") },
-    { id = "explorateur",cat = "Exploration",     tex = "Spell_Nature_Thorns",          nom = L("Traqueur des profondeurs"), desc = L("Découvrir 5 rares inconnus") },
+    { id = "decouverte", cat = "Exploration",     tex = "Spell_Arcane_StarFire",        nom = L("Première découverte"),   desc = L("Croiser pour la première fois un rare") },
+    { id = "explorateur",cat = "Exploration",     tex = "Spell_Nature_Thorns",          nom = L("Traqueur des profondeurs"), desc = L("Croiser 5 rares différents") },
+    { id = "rencontres10", cat = "Exploration",  tex = "Ability_Hunter_BeastTaming",   nom = L("Œil du traqueur"), desc = L("Croiser 10 rares différents") },
+    { id = "rencontres25", cat = "Exploration",  tex = "Ability_Hunter_BeastTaming",   nom = L("Vieille connaissance des sentiers"), desc = L("Croiser 25 rares différents") },
+    { id = "regioncomplete", cat = "Exploration", tex = "INV_Misc_Book_09",             nom = L("Naturaliste régional"), desc = L("Croiser tous les rares d'une même région") },
     -- Légendes locales
     { id = "brachland",  cat = L("Légendes locales"), tex = "Ability_Hunter_BeastTaming",  nom = L("Toute une panoplie"),    desc = L("Tuer Humar, Vif-Crinière et Takk — les trois fiertés des plaines") },
     { id = "rotheap",    cat = L("Légendes locales"), tex = "Spell_Frost_FrostBolt",      nom = L("Ami des profondeurs"),   desc = L("Tuer Rotheap dans les Paluns") },
@@ -1069,7 +1234,8 @@ MHH_SUCCES = {
     { id = "neige",      cat = L("Les éléments"),      tex = "Spell_Frost_FrostArmor",       nom = L("Traqueur des neiges"),   desc = L("Réussir une chasse sous la neige") },
     -- La ménagerie
     { id = "amidevoue",  cat = L("La ménagerie"), tex = "Ability_Hunter_BeastTaming", nom = L("Ami dévoué"), desc = L("Amener un pensionnaire à 100 d'affinité") },
-    { id = "encloscomplet", cat = L("La ménagerie"), tex = "INV_Misc_Cage_01", nom = L("Enclos complet"), desc = L("Avoir tous les spécimens de la savane en enclos") },
+    { id = "encloscomplet", cat = L("La ménagerie"), tex = "INV_Box_01", nom = L("Enclos complet"), desc = L("Avoir tous les spécimens de la savane en enclos") },
+    { id = "eleveur", cat = L("La ménagerie"), tex = "Spell_Nature_SpiritWolf", nom = L("Éleveur"), desc = L("Avoir 5 pensionnaires en enclos") },
 }
 
 local function nbChasses()
@@ -1085,8 +1251,15 @@ local function nbCatalogues()
 end
 
 local function nbDecouverts()
+    -- v0.119 : compte les RENCONTRES (première fois qu'on cible un rare),
+    -- pas seulement les rares hors carnet. Compteurs Guilde, titres
+    -- « traqueur »/« Étoile du découvreur » et succès en découlent tous.
     local n = 0
-    for _ in pairs(DB.decouverts) do n = n + 1 end
+    if DB.rencontres then
+        for _ in pairs(DB.rencontres) do n = n + 1 end
+    else
+        for _ in pairs(DB.decouverts) do n = n + 1 end
+    end
     return n
 end
 
@@ -1104,6 +1277,36 @@ local MHH_BanniereVisible = function() return false end
 -- sinon chaque reprise affiche un toast en même temps, au même
 -- endroit : textes juxtaposés illisibles (rang + succès + prise).
 local toastRepriseEnAttente = false
+-- Icônes RONDES du médaillon (Textures/Circles/) : quand l'icône du jeu
+-- a une version ronde, le toast parchemin l'utilise — sinon repli sur
+-- l'icône carrée du jeu (v1 : griffe/patte/sceau — voir icones_rondes.py)
+MHH_ICONES_RONDES = { -- GLOBALE préfixée (limite 200 locales du chunk)
+    ["INV_Misc_MonsterClaw_04"] = "griffe",  -- prise validée + couronne d'or
+    ["Ability_Hunter_BeastTaming"] = "patte", -- spécimen capturé + intrus
+    ["INV_Misc_Note_01"] = "sceau",           -- contrat rempli
+    ["INV_Misc_Coin_01"] = "sceau",           -- /hunt test prime
+    ["INV_Misc_Dice_01"] = "rumor",             -- rumeur élucidée (v0.63)
+}
+function MHH_AppliquerIconeMedaillon(icone, texPath)
+    -- Chemin complet -> nom de fichier seul, puis version ronde si dispo.
+    -- Ronde = 74 px (elle rempli le médaillon, elle a sa propre bordure) ;
+    -- carrée = 54 px (elle « flotte », le carré se fait discret).
+    local base = texPath and texPath:match("([^\\]+)$")
+    local ronde = base and MHH_ICONES_RONDES[base]
+    if ronde then
+        -- v0.150 : BUG 1.12 — SetTexture ne renvoie RIEN, donc « ok »
+        -- valait TOUJOURS nil : les icônes RONDES n'étaient JAMAIS
+        -- utilisées, même générées. Le bon test (cf. /hunt test icones)
+        -- est GetTexture() ~= nil APRÈS le SetTexture.
+        icone:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Circles\\" .. ronde .. ".tga")
+        if icone:GetTexture() then
+            icone:SetSize(102, 102)
+            return -- ronde chargée : fini
+        end
+    end
+    icone:SetSize(54, 54)
+    icone:SetTexture(texPath or "Interface\\Icons\\INV_Misc_QuestionMark")
+end
 local function ToastSuccesSuivant()
     -- File courtoise : quand le bandeau « CHASSE RÉUSSIE » occupe le
     -- haut de l'écran, le toast attend sa disparition (3 s) — avant,
@@ -1125,48 +1328,224 @@ local function ToastSuccesSuivant()
     end
     toastEnCours = true
     local texPath, nom, desc = args[1], args[2], args[3]
+    -- typeAff : type d'affichage du toast — « succes » = desc est une
+    -- phrase (ancien système), sinon desc = nom (évent. avec zone entre
+    -- parenthèses) affiché en grand — voir ToastSuccesSuivant
+    local typeAff = args[5]
+    -- forceMode : surcharge ponctuelle du mode (« wow » = ancien encart
+    -- sombre, demandé pour la promotion de guilde et /hunt test wow)
+    local forceMode = args[4] or MHH_ToastForceMode
+    MHH_ToastForceMode = nil
+    local mode = forceMode or DB.config.toast
     local t = CreateFrame("Frame", nil, UIParent)
-    t:SetSize(380, 64)
-    -- Position : sous le bandeau « CHASSE RÉUSSIE » (bas à -210). En mode
-    -- texture custom, le bandeau « EN CHASSE » (660x210 ancré à -60)
-    -- descend jusqu'à -270 : on descend le toast sous lui.
-    local yToast = (DB.config.texUI == "custom") and -300 or -230
-    t:SetPoint("TOP", UIParent, "TOP", 0, yToast)
+    -- Position : remontée à la demande du joueur (2e itération) : en
+    -- mode custom, -170 du haut ; en mode wow, -35. Les toasts arrivent
+    -- après la bannière de victoire, éphémère — le chevauchement reste
+    -- acceptable au profit de la visibilité.
+    local yToast = (mode == "custom") and -170 or -35
     t:SetFrameStrata("HIGH")
-    -- Vrai liseré : l'ancien « bord » doré couvrait TOUT le cadre
-    -- (SetAllPoints sur la couche du dessus) — le toast n'était qu'un
-    -- aplat doré. Encadrement façon parchemin à la place : liseré
-    -- brun-doré de 3 px, fond sombre inset, filet doré discret, et une
-    -- barre d'accent le long de l'icône — comme une plaque de prime.
-    local bord = t:CreateTexture(nil, "BACKGROUND")
-    bord:SetAllPoints()
-    bord:SetColorTexture(0.60, 0.44, 0.20, 0.98) -- liseré brun-doré
-    local fond = t:CreateTexture(nil, "BORDER")
-    fond:SetPoint("TOPLEFT", 3, -3)
-    fond:SetPoint("BOTTOMRIGHT", -3, 3)
-    fond:SetColorTexture(0.06, 0.04, 0.02, 0.95) -- fond sombre, liseré visible
-    local filet = t:CreateTexture(nil, "BORDER")
-    filet:SetPoint("TOPLEFT", 6, -6)
-    filet:SetPoint("BOTTOMRIGHT", -6, 6)
-    filet:SetColorTexture(0.78, 0.62, 0.25, 0.28) -- filet doré discret
-    local accent = t:CreateTexture(nil, "BORDER")
-    accent:SetSize(4, 52)
-    accent:SetPoint("LEFT", 5, 0)
-    accent:SetColorTexture(0.78, 0.62, 0.25, 0.90) -- barre à gauche de l'icône
-    -- Icône du jeu (les emojis ne s'affichent pas dans WoW)
-    local icone = t:CreateTexture(nil, "ARTWORK")
-    icone:SetSize(36, 36)
-    icone:SetPoint("LEFT", 14, 6)
-    icone:SetTexture(texPath or "Interface\\Icons\\INV_Misc_QuestionMark")
-    local tex = t:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    tex:SetPoint("LEFT", 62, 8)
-    tex:SetText("|cffffd100" .. nom .. "|r")
-    local tdx = t:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    tdx:SetPoint("LEFT", 64, -12)
-    tdx:SetText(desc)
-    C_Timer.After(5, function()
+    local tex, tdx -- titre + description (créés selon le mode ci-dessous)
+    if mode == "custom" then
+        -- Toast PARCHEMIN : fond toast1.tga (bannière de guilde), icône
+        -- posée dans le médaillon à droite (~85% de la largeur), tampon
+        -- de faction encre en bas à gauche. Ratio de toast1.tga : 2,6:1.
+        t:SetSize(520, 200)
+        t:SetPoint("TOP", UIParent, "TOP", 0, yToast)
+        -- Plaque sombre de SECOURS sous la bannière : si toast1.tga est
+        -- absente (première installation), le toast retombe de lui-même
+        -- sur un fond sombre — le texte reste lisible quoi qu'il arrive.
+        local secours = t:CreateTexture(nil, "BACKGROUND")
+        secours:SetAllPoints()
+        secours:SetColorTexture(0.06, 0.04, 0.02, 0.95)
+        local parch = t:CreateTexture(nil, "ARTWORK")
+        parch:SetAllPoints()
+        pcall(function() parch:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\toast1.tga") end)
+        -- Icône du jeu dans le médaillon (36-58 px : le médaillon fait
+        -- ~30% de la hauteur de la bannière)
+        local icone = t:CreateTexture(nil, "OVERLAY")
+        -- Taille posée par AppliquerIconeMedaillon selon ronde/carrée
+        -- (177, 1) : itération de recentrage finale (retours de test en jeu)
+        icone:SetPoint("CENTER", t, "CENTER", 177, 1)
+        -- Icône ronde si elle existe (Textures/Circles/), sinon carrée
+        MHH_AppliquerIconeMedaillon(icone, texPath)
+        -- Tampon de guilde : Alliance = lion bleu, Horde = worg rouge
+        -- (tampons encre façon MH, découpe alpha circulaire)
+        local tampon = t:CreateTexture(nil, "OVERLAY")
+        tampon:SetSize(92, 92)
+        -- Bien À L'INTÉRIEUR du parchemin : agrandi et descendu vers
+        -- le coin bas-gauche, marge de sécurité conservée (retour test)
+        tampon:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 20, 18)
+        -- INCLINAISON -12° : un vrai coup de tampon n'est jamais droit.
+        -- BUG CORRIGÉ : les coins doivent suivre la convention WoW
+        -- (Y vers le BAS) — avec Y inversé, la rotation devenait un
+        -- MIROIR et le lion paraissait « retourné ». Formule propre :
+        -- le point affiché au coin (cx,cy) du cadre échantillonne la
+        -- texture tournée en sens inverse : (cx·cosφ + cy·sinφ,
+        -- -cx·sinφ + cy·cosφ) — déterminant +1 : rotation pure.
+        local rad = math.rad(-12)
+        local cR, sR = math.cos(rad), math.sin(rad)
+        local function coinTampon(cx, cy)
+            return 0.5 + cR * cx + sR * cy, 0.5 - sR * cx + cR * cy
+        end
+        -- Attention : seuls les DERNIERS appels d'une liste d'arguments
+        -- sont expansés en valeurs multiples — on passe par des
+        -- variables, sinon SetTexCoord ne reçoit que 5 valeurs (bug Lua)
+        -- Coins du cadre en repère écran (Y vers le bas) :
+        local ulx, uly = coinTampon(-0.5, -0.5)
+        local llx, lly = coinTampon(-0.5, 0.5)
+        local urx, ury = coinTampon(0.5, -0.5)
+        local lrx, lry = coinTampon(0.5, 0.5)
+        tampon:SetTexCoord(ulx, uly, llx, lly, urx, ury, lrx, lry)
+        -- Tampon de guilde : Alliance = lion bleu, Horde = worg rouge.
+        -- MHH_ToastTestFaction : surcharge ponctuelle pour /hunt test tampon
+        local faction = MHH_ToastTestFaction or "Alliance"
+        if not MHH_ToastTestFaction then
+            pcall(function() local f = UnitFactionGroup and UnitFactionGroup("player") if f then faction = f end end)
+        end
+        MHH_ToastTestFaction = nil
+        tampon:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\tampon_"
+            .. ((faction == "Horde") and "horde" or "alliance") .. ".tga")
+        tampon:SetAlpha(0.9)
+        -- garde la reference pour le fondu : le tampon fane PLUS VITE
+        -- que le toast (retour de test : bleu plein, il restait visible
+        -- un poil apres la disparition du parchemin beige)
+        t.tamponRef = tampon
+        -- Textes sur la zone centrale du parchemin (texte brun sombre :
+        -- le fond est beige, le blanc classique y serait illisible)
+        tex = t:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        -- MEME ZONE que le nom (x90..370, centre x250) : alignement
+        -- parfait titre / filet / nom. Le « ! » des titres longs
+        -- debordait sur le medaillon a droite (retour de test mission :
+        -- le rond metallier commence a x386) — la zone s'arrete a x370,
+        -- et la taille auto garantit qu'aucun titre ne l'atteint
+        tex:SetPoint("TOPLEFT", t, "TOPLEFT", 110, -44)
+        tex:SetWidth(280)
+        tex:SetJustifyH("CENTER")
+        -- Titre XXL : c'est LE moment « wahou » du toast. Plus
+        -- prononcé : OUTLINE + ombre brune (l'outline prend la couleur
+        -- de l'ombre) — brun MOYEN, pas foncé : un contour trop sombre
+        -- faisait « autocollant », le brun moyen fait « encre pressée »
+        -- TAILLE AUTO du titre : « MISSION ACCOMPLIE ! » (19 c.) se
+        -- repliait sur deux lignes qui écrasaient le filet (retour de
+        -- test) — le titre tient TOUJOURS sur une ligne désormais
+        local titreTxt = string.upper(nom or "") .. " !"
+        -- v0.64 : « CONTRAT REMPLI ! » (16 c.) en 30 px REPLIAIT sur
+        -- deux lignes (retour de test) — paliers recalibres prudemment :
+        -- 26 px des 14 caracteres (taille validee de « RUMEUR ÉLUCIDÉE ! »)
+        local tailleTitre = #titreTxt <= 13 and 32
+            or (#titreTxt <= 17 and 26)
+            or (#titreTxt <= 18 and 24)
+            or (#titreTxt <= 22 and 22)
+            or 20
+        pcall(function() tex:SetFont("Fonts\\FRIZQT__.TTF", tailleTitre, "OUTLINE") end)
+        tex:SetTextColor(0.62, 0.47, 0.12) -- or encré, plus éclatant
+        tex:SetShadowColor(0.42, 0.30, 0.14)
+        tex:SetShadowOffset(0, 0)
+        -- MAJUSCULES + « ! » : la façon Monster Hunter (QUÊTE
+        -- ACCOMPLIE s'y affiche en grandes capitales d'or sur ruban)
+        tex:SetText(titreTxt)
+        -- Filet gravé sous le titre : délimiteur DORÉ (le brun sombre
+        -- passait pour du noir — retour de test)
+        local filetTitre = t:CreateTexture(nil, "OVERLAY")
+        filetTitre:SetSize(220, 2)
+        filetTitre:SetPoint("TOPLEFT", t, "TOPLEFT", 140, -92)
+        filetTitre:SetColorTexture(0.78, 0.62, 0.28, 0.9)
+        tdx = t:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        -- x100 largeur 280 : zone recentree ENTRE tampon (fin x112) et
+        -- icone (debut x386) — retour de test missions : le texte et le
+        -- tiret de la region passaient SOUS le tampon lion
+        tdx:SetPoint("TOPLEFT", t, "TOPLEFT", 110, -102)
+        tdx:SetWidth(280)
+        tdx:SetJustifyH("CENTER")
+        -- Description : « Rotheap (Les Paluns) » est éclatée en deux
+        -- lignes — le NOM en 26 px avec fin contour d'encre (il pète
+        -- presque comme le titre, retour de test : la police plate
+        -- était trop « sage »), la RÉGION dessous en plus discret.
+        -- Succès (typeAff) : desc est une phrase, pas un nom — même
+        -- traitement auto, jamais de zone entre parenthèses.
+        local nomEntite, region
+        if typeAff == "succes" then
+            nomEntite, region = desc, nil
+        else
+            nomEntite, region = (desc or ""):match("^(.-) %((.-)%)$")
+            if not nomEntite then nomEntite, region = desc, nil end
+        end
+        -- PAS de region (rumeurs, succes) : le nom descend au milieu de
+        -- l'espace libre — colle sous le filet, il laissait un grand vide
+        -- sous lui et le bloc paraissait tout en haut (retour de test)
+        if not region then tdx:SetPoint("TOPLEFT", t, "TOPLEFT", 110, -122) end
+        tdx:SetText(nomEntite or "")
+        -- TAILLE AUTO du nom : 26 px pour un nom de bête court, mais
+        -- « Nettoyer la tannerie — Rivau » ou « Le dé pipé de Menara »
+        -- débordaient sur le tampon (gauche) et l'icône (droite) —
+        -- retour de test missions/rumeurs. Le texte reste entre les
+        -- deux, quelle que soit sa longueur
+        local tailleNom = #nomEntite <= 16 and 26 or (#nomEntite <= 28 and 21 or 17)
+        -- Police PLEINE a toutes les tailles (retour de test : l'OUTLINE
+        -- aux petites tailles rendait le texte trop gras / trop noir)
+        pcall(function() tdx:SetFont("Fonts\\FRIZQT__.TTF", tailleNom) end)
+        tdx:SetTextColor(0.32, 0.20, 0.06) -- encre profonde
+        tdx:SetShadowColor(0.85, 0.72, 0.45)
+        tdx:SetShadowOffset(1, -1)
+        if region then
+            local tdx2 = t:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            tdx2:SetPoint("TOPLEFT", t, "TOPLEFT", 110, -138)
+            tdx2:SetWidth(280)
+            tdx2:SetJustifyH("CENTER")
+            pcall(function() tdx2:SetFont("Fonts\\FRIZQT__.TTF", #region <= 24 and 19 or 15) end)
+            tdx2:SetTextColor(0.45, 0.34, 0.20) -- encre délavée, hiérarchie
+            tdx2:SetShadowColor(0.85, 0.72, 0.45)
+            tdx2:SetShadowOffset(1, -1)
+            -- MAJUSCULES + tirets cadratins : la région se lit comme
+            -- un cartouche de carte (retour de test : trop « sage »)
+            tdx2:SetText("— " .. string.upper(region) .. " —")
+        end
+    else
+        -- Toast classique (mode wow) : plaque sombre à liseré doré
+        t:SetSize(380, 64)
+        t:SetPoint("TOP", UIParent, "TOP", 0, yToast)
+        -- Vrai liseré : l'ancien « bord » doré couvrait TOUT le cadre
+        -- (SetAllPoints sur la couche du dessus) — le toast n'était qu'un
+        -- aplat doré. Encadrement façon parchemin à la place : liseré
+        -- brun-doré de 3 px, fond sombre inset, filet doré discret, et une
+        -- barre d'accent le long de l'icône — comme une plaque de prime.
+        local bord = t:CreateTexture(nil, "BACKGROUND")
+        bord:SetAllPoints()
+        bord:SetColorTexture(0.60, 0.44, 0.20, 0.98) -- liseré brun-doré
+        local fond = t:CreateTexture(nil, "BORDER")
+        fond:SetPoint("TOPLEFT", 3, -3)
+        fond:SetPoint("BOTTOMRIGHT", -3, 3)
+        fond:SetColorTexture(0.06, 0.04, 0.02, 0.95) -- fond sombre, liseré visible
+        local filet = t:CreateTexture(nil, "BORDER")
+        filet:SetPoint("TOPLEFT", 6, -6)
+        filet:SetPoint("BOTTOMRIGHT", -6, 6)
+        filet:SetColorTexture(0.78, 0.62, 0.25, 0.28) -- filet doré discret
+        local accent = t:CreateTexture(nil, "BORDER")
+        accent:SetSize(4, 52)
+        accent:SetPoint("LEFT", 5, 0)
+        accent:SetColorTexture(0.78, 0.62, 0.25, 0.90) -- barre à gauche de l'icône
+        -- Icône du jeu (les emojis ne s'affichent pas dans WoW)
+        local icone = t:CreateTexture(nil, "ARTWORK")
+        icone:SetSize(36, 36)
+        icone:SetPoint("LEFT", 14, -4) -- centré sur le bloc texte (titre +8, desc -12)
+        icone:SetTexture(texPath or "Interface\\Icons\\INV_Misc_QuestionMark")
+        tex = t:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        tex:SetPoint("LEFT", 62, 8)
+        tex:SetText("|cffffd100" .. nom .. "|r")
+        tdx = t:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        tdx:SetPoint("LEFT", 64, -12)
+        tdx:SetText(desc)
+    end
+    -- 4 s d'affichage puis fondu (retour de test : le toast partait
+    -- un poil trop tard après la validation)
+    C_Timer.After(4, function()
         for i = 1, 10 do
-            C_Timer.After(i * 0.1, function() t:SetAlpha(1 - i / 10) end)
+            C_Timer.After(i * 0.1, function()
+                t:SetAlpha(1 - i / 10)
+                -- Tampon : plus de surcharge — l'alpha du cadre
+                -- s'applique aussi au tampon, fondu synchronise avec
+                -- le parchemin (volonte de l'utilisateur)
+            end)
         end
         C_Timer.After(1.2, function()
             t:Hide()
@@ -1176,8 +1555,8 @@ local function ToastSuccesSuivant()
     end)
     if DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_OPEN or 888) end
 end
-local function ToastSucces(texPath, nom, desc)
-    fileToasts[#fileToasts + 1] = { texPath, nom, desc }
+local function ToastSucces(texPath, nom, desc, forceMode, typeAff)
+    fileToasts[#fileToasts + 1] = { texPath, nom, desc, forceMode, typeAff }
     if not toastEnCours then ToastSuccesSuivant() end
 end
 
@@ -1187,6 +1566,8 @@ local function ToastCibleDuJour(nom, zone)
     local t = CreateFrame("Frame", nil, UIParent)
     -- Notification compacte coin haut-droit : pas de grand encart centré,
     -- l'info reste discrète (l'icône donne l'accent, le texte habille).
+    -- (v0.6 : l'encart parchemin toast2.tga a été testé puis retiré —
+    -- la cible du jour reste sur ce format compact, à la demande.)
     t:SetSize(380, 66)
     t:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -260, -70)
     t:SetFrameStrata("HIGH")
@@ -1242,7 +1623,7 @@ local function DebloquerSucces(id)
     for _, s in ipairs(MHH_SUCCES) do
         if s.id == id then
             DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Succès débloqué : |cffffff00") .. s.nom .. "|r — " .. s.desc)
-            ToastSucces("Interface\\Icons\\" .. (s.tex or "INV_Misc_QuestionMark"), s.nom, s.desc)
+            ToastSucces("Interface\\Icons\\" .. (s.tex or "INV_Misc_QuestionMark"), s.nom, s.desc, nil, "succes")
             return
         end
     end
@@ -1256,6 +1637,9 @@ MHH_RANGS = {
     { seuil = 500,  nom = L("Vétéran") },
     { seuil = 1500, nom = L("Légende de la chasse") },
 }
+-- (v0.59 : l'ancienne table hexa MHH_RANG_COULEURS de la v0.56 est retirée
+-- au profit de MHH_RangHex, dérivé de la palette du liseré du carnet — une
+-- seule famille de couleurs de rang dans tout l'addon.)
 local function RangGuilde(points)
     local idx = 1
     for i, r in ipairs(MHH_RANGS) do
@@ -1278,7 +1662,7 @@ MHH_NOTES = {
     ["Vif-Crinière"] = L("Le zèbre rapide du plateau. Il faut des jambes pour le suivre."),
     ["Rotheap"] = L("Il sort de la mer à la nuit tombée et remonte la rivière. Il en faut plusieurs pour le vaincre."),
     ["Naraxis"] = L("L'araignée des Collines. Sa toile se tend à l'ouest, parmi les arbres morts."),
-    ["Mor'Ladim"] = L("Cette chose rode dans le cimetière des Bois de la Pénombre. Les gardes n'osent plus y descendre."),
+    ["Mor'Ladim"] = L("Morgan Ladimore, chevalier mort sans sépulture — sa fille Sarah fleurit sa tombe, lui rôde."),
     ["Malcin cendrecœur"] = L("Un ancien de la Ruche-Sacrenuit, exilé loin de sa reine."),
     -- Iconiques sans contenu jusqu'ici : le naturaliste les couvre aussi
     ["Le Rateau"] = L("Ses griffes tombent plus vite que l'œil ne cligne. Les prairies l'entendent avant de le voir."),
@@ -1295,6 +1679,251 @@ MHH_NOTES = {
     ["Veuve-sangsue"] = L("Sa toile boit plus que la rosée. Les paluns évitent ses arbres depuis toujours."),
     ["Snarlmane"] = L("Un lion des montagnes à crinière en broussaille. Les gnolls l'appellent « le mauvais temps »."),
 }
+-- Graphies officielles du client : les noms renommés pointent vers la
+-- même note (les anciennes clés ci-dessus restent valables pour les
+-- vieux carnets, façon alias de fusion).
+MHH_NOTES["Humar le Fier"] = MHH_NOTES["Humar le Seigneur hautain"]
+MHH_NOTES["Vif-crins"] = MHH_NOTES["Vif-Crinière"]
+MHH_NOTES["Le Rake"] = MHH_NOTES["Le Rateau"]
+MHH_NOTES["Hurleur fantomatique"] = MHH_NOTES["Hurlement fantôme"]
+MHH_NOTES["Rohh le silencieux"] = MHH_NOTES["Rohh le Silencieux"]
+MHH_NOTES["Vieux Vile mâchoire"] = MHH_NOTES["Vieux Vicejaw"]
+MHH_NOTES["Veuve sanguine"] = MHH_NOTES["Veuve-sangsue"]
+-- Passe LORE : notes documentées (quêtes, références Warcraft, notoriété
+-- des familiers de chasseur) pour les rares qui ont une vraie histoire.
+-- Pas d'invention : le reste du bestiaire reste au générateur.
+MHH_NOTES["Brèchedent"] = L("La chatte la plus rapide d'Azeroth : cadence d'attaque éclair, le cauchemar des lanceurs de sorts.")
+MHH_NOTES["Rak'shiri"] = L("Frostsaber d'exception, longtemps le félin le plus convoité des chasseurs d'Hiverpré.")
+MHH_NOTES["Grogneur"] = L("Ce loup noir résiste au feu mieux qu'une forge — les chasseurs l'ont longtemps dressé pour ça.")
+MHH_NOTES["Grunter"] = L("Un sanglier de guerre : il charge, il revient, il charge encore. Rien ne le calme.")
+MHH_NOTES["Olm la Sage"] = L("Une chouette d'une sagesse proverbiale. Les elfes de Gangrebois la croisent un présage.")
+MHH_NOTES["Fantôme de Varo'then"] = L("Capitaine de la garde d'Azshara, tombé à la guerre des Anciens : son fantôme hante encore la rive.")
+MHH_NOTES["Grand général Abbendis"] = L("L'un des fondateurs de la Croisade écarlate : fanatique en vie, redoutable en mort.")
+MHH_NOTES["Seigneur forestier Hawspear"] = L("Le seigneur des rôdeurs de Quel'Lithien : dernier rempart elfe contre le Fléau.")
+MHH_NOTES["Seigneur du crépuscule Everun"] = L("Un lord du Marteau du crépuscule, venu préparer le réveil des silithides.")
+MHH_NOTES["Chef Perdu"] = L("Chef des Perdus, ces draeneï brisés par les marais : sa tribu erre depuis la chute de Draenor.")
+MHH_NOTES["Cuisinier perdu"] = L("Les Perdus sont des draeneï brisés par les magies des marais. Lui, c'est la cuisine qu'il a cassée.")
+MHH_NOTES["Bête des égouts"] = L("Un crocilisque qui a grandi dans les canaux de Hurlevent. Les enfants jurent qu'il existe. Il existe.")
+MHH_NOTES["Zaricotl"] = L("Un kodo mort-vivant qui n'aurait jamais dû se relever. Les caravanes détournent leur route depuis.")
+MHH_NOTES["Uhk'loc"] = L("Le gorille blanc d'Un'Goro : chasseurs et badauds se le disputent depuis des années.")
+MHH_NOTES["Roi Mosh"] = L("Le plus grand des diablesaures. Sa trace seule fait trembler le cratère entier.")
+MHH_NOTES["Matriarche Zavas"] = L("La gardienne des couvées du cratère : approchez-vous, et la ruche entière se lève.")
+MHH_NOTES["Timber"] = L("Le loup blanc du Dun Morogh, premier grand amour de générations de jeunes chasseurs nains.")
+MHH_NOTES["Bjarn"] = L("L'ours des pentes enneigées : les nains jurent qu'il survit aux avalanches. En dessous.")
+MHH_NOTES["Dishu"] = L("Une féline rapide et convoitée des chasseurs : sa cadence d'attaque fait des étincelles.")
+MHH_NOTES["Snort le Moqueur"] = L("Une hyène qui ricane dans la poussière des Tarides — on l'entend avant de la voir.")
+MHH_NOTES["Azzere la Lame-des-cieux"] = L("Un serpent des vents qui plane au-dessus des Tarides : sa lame est un croc.")
+MHH_NOTES["Veuve-sangsue"] = L("Sa toile, près des marais des Paluns, boit plus vite qu'elle ne mord.")
+MHH_NOTES["Edan le Hurleur"] = L("Une harpie du Dun Morogh : son hurlement glace le sang des nains au petit matin.")
+MHH_NOTES["Intendant du Bouclier balafré"] = L("Il porte sur lui le sceau de l'Ascension : la clé des profondeurs du Pic Blackrock.")
+MHH_NOTES["Fenros"] = L("Un worg des Bois de la Pénombre — les bûcherons jurent qu'il a des yeux d'homme.")
+MHH_NOTES["Mère Croc"] = L("La mère des araignées du bois : pondre, mordre, recommencer.")
+MHH_NOTES["Le Jonc"] = L("Une tortue géante endormie au large : les pêcheurs la prennent pour un îlot, à leurs dépens.")
+MHH_NOTES["Narillasanz"] = L("Un dragonnet bleu égaré bien au sud : plus coriace que sa taille ne le laisse croire.")
+MHH_NOTES["Azurous"] = L("Un drake bleu qui veille sur les neiges d'Hiverpré. Le ciel, ici, a un propriétaire.")
+MHH_NOTES["Matriarche ravasaure"] = L("La mère des ravasaures : les traqueurs du cratère connaissent sa trace par cœur.")
+MHH_NOTES["Dame Hederine"] = L("Démone de la gorge Sombre-Brume : elle collectionne les âmes des curieux.")
+MHH_NOTES["Prince Nazjak"] = L("Prince des Fanécorce : la couronne de bois ne lui sied pas plus que la paix.")
+MHH_NOTES["Molok l'Anéantisseur"] = L("Un ogre des Hautes-terres qui écrase d'abord — et ne pose jamais de questions après.")
+MHH_NOTES["Le Béhémoth"] = L("Une montagne de muscles dans la poussière ardente : son ombre suffit à refroidir les téméraires.")
+MHH_NOTES["Omgorn l'Égaré"] = L("Un ogre qui a perdu son navire, son équipage et son sens de l'orientation. Pas son appétit.")
+MHH_NOTES["Kregg Keelhaul"] = L("Capitaine pirate échoué sur la côte : il n'a sauvé que son chapeau et sa rancune.")
+MHH_NOTES["Veuve de Sombrebrume"] = L("Maîtresse de la grotte Sombrebrume : sa toile couvre toute l'entrée.")
+MHH_NOTES["Chef de meute Frayeloup"] = L("La meute d'Orneval lui obéit au doigt et au croc.")
+MHH_NOTES["Hurlemort"] = L("Son hurlement couvre le fracas des cascades de Gangrebois. On l'entend avant de le voir.")
+MHH_NOTES["Alshirr Souffléau"] = L("Un satyre du Gangrebois, corrompu au souffle de soufre. Sa seule présence flétrit la forêt qu'il traverse.")
+MHH_NOTES["Ancien vengeur"] = L("Un Ancien réveillé en colère — les elfes des Serres essaient de l'apaiser depuis des siècles.")
+
+-- Descriptions du naturaliste pour TOUT le gibier : les bêtes sans note
+-- manuelle ci-dessus reçoivent un texte dérivé de leur famille (mots-clés
+-- du nom, mêmes familles que les sensibilités) et de leur zone de chasse.
+-- Le choix est DÉTERMINISTE (somme des octets du nom) : un monstre garde
+-- toujours la même description, même après un relog.
+local MHH_NOTES_GEN = {
+    { mots = { "araign", "veuve", "toile", "tisse", "naraxis", "chat", "aiguille" },
+      txt = {
+        L("Elle tisse plus vite qu'on ne coupe. Reculez d'un pas, elle a déjà bougé d'une toise."),
+        L("Huit yeux dans la pénombre : elle vous voit bien avant que vous voyiez la sienne."),
+        L("Sa toile s'étend de branche en branche, et ce qui s'y accroche y reste."),
+      } },
+    { mots = { "loup", "worg", "moloch", "hurleur", "claque-croc" },
+      txt = {
+        L("La meute l'évite : là où il passe, les autres loups se taisent."),
+        L("Il chasse en tournant, jamais en ligne droite. Les pièges droits ne le prennent pas."),
+        L("On l'entend hurler aux orages. Les bergers comptent les nuits sans lui."),
+      } },
+    { mots = { "lion", "panthère", "panthere", "tigre", "tigr", "félin", "felins", "rake", "humar" },
+      txt = {
+        L("Un prédateur patient : il ne court pas après le gibier, il l'attend au bon endroit."),
+        L("Sa crinière porte les marques de vieux combats. Il n'a jamais fui le premier."),
+        L("Les pistes se ressemblent toutes — sauf les siennes : griffes profondes, pas de bruit."),
+      } },
+    { mots = { "raptor" },
+      txt = {
+        L("Plus vite qu'un éclair sur pattes, et deux fois plus malin qu'il n'y paraît."),
+        L("Il frappe, recule, revient. Tenez bon à la première passe, la deuxième est pire."),
+        L("Ses plumes trahissent son humeur : quand elles se hérissent, c'est déjà trop tard."),
+      } },
+    { mots = { "sanglier", "broch", "snort", "groin", "razormaw", "tranchegueule" },
+      txt = {
+        L("Une masse de groins et de défenses qui charge tout ce qui brille."),
+        L("Il laboure les sentiers à la recherche de racines — et de chasseurs distraits."),
+        L("Son cuir épais encaisse les flèches. Visez sous l'épaule."),
+      } },
+    { mots = { "croco", "crocilis" },
+      txt = {
+        L("Deux yeux au ras de l'eau, et puis plus rien. Jusqu'au dernier moment."),
+        L("Sa mâchoire claque comme une porte de prison : ce qui entre ne ressort pas."),
+        L("Il attend au bord du gué, immobile pendant des heures. La patience est son arme."),
+      } },
+    { mots = { "scorp" },
+      txt = {
+        L("Sous les rochers chauds, sa queue compte les secondes avant de frapper."),
+        L("Sa carapace dévie le fer. C'est la queue qui décide du combat."),
+        L("Le sable retient sa chaleur, et lui, le souvenir de chaque piqûre."),
+      } },
+    { mots = { "silith", "insect", "krellack", "grubthor", "moissonneur" },
+      txt = {
+        L("Une carapace qui craque sous les bottes : le sol entier bouge quand il s'éveille."),
+        L("Les mares s'évaporent sur son passage. Il ne laisse que des mandibules derrière lui."),
+        L("Il travaille la terre en creusant, et défend son chantier avec cent bras."),
+      } },
+    { mots = { "dragon", "drak", "wyrm", "stégo", "stego", "grondeterre", "azur" },
+      txt = {
+        L("Écailles anciennes, yeux plus anciens encore. Il régnait ici bien avant les routes."),
+        L("Sa seule présence fait taire les oiseaux. On le sent avant de le voir."),
+        L("Son souffre fait tourner les lames de moulins à trois lieues."),
+      } },
+    { mots = { "murloc", "gluggle", "squiddic" },
+      txt = {
+        L("Il chante faux au bord de l'eau, mais ses dents, elles, chantent juste."),
+        L("Le golgolgol de sa tribu précède chaque embuscade. Écoutez avant d'avancer."),
+        L("Il ne quitte jamais la rive — sauf pour vous surprendre."),
+      } },
+    { mots = { "fantôme", "esprit", "âme", "ame", "spectre", "putride", "carcasse", "mort", "ombre", "moiss" },
+      txt = {
+        L("Ce qui le traverse ne le blesse pas ; ce qu'il touche, lui, s'en souvient."),
+        L("Il rôde là où il est tombé. Le soir, les torches s'écartent de son chemin."),
+        L("Une forme qui froisse l'air du soir. Le fer passe au travers, la peur non."),
+      } },
+    { mots = { "gangre", "démon", "demon", "imp", "satyre", "scornn", "faux-sombre", "souffle" },
+      txt = {
+        L("L'air autour de lui a un goût de cendre. Le sol garde ses empreintes brûlées."),
+        L("Il n'a peur ni du fer, ni du feu — mais l'eau bénite l'agace prodigieusement."),
+        L("Il murmure des promesses qu'il tient toujours, d'une manière ou d'une autre."),
+      } },
+    { mots = { "golem", "méca", "meca", "faux", "reaper", "verifonix", "défect", "defect" },
+      txt = {
+        L("Une mécanique qui a pris goût à la chasse. Huilez vos armes, pas lui."),
+        L("Il tourne sans relâche, sans faim ni peur — c'est bien ça le problème."),
+        L("Ses engrenages grincent avant l'attaque : c'est le seul avertissement."),
+      } },
+    { mots = { "feu", "flamme", "brûl", "brul", "immol", "volcan", "braise", "étincelle", "etincelle", "flamboy" },
+      txt = {
+        L("La terre fume sur son passage. Les flaques de la veille sont des cicatrices."),
+        L("Il dort dans les cendres chaudes et se réveille en flammèches."),
+        L("Le froid ne l'atteint pas, l'eau l'énerve. Prévoyez des seaux."),
+      } },
+    { mots = { "pierre", "roche", "rocher", "terre", "géom", "geom", "rhumbl" },
+      txt = {
+        L("Le sol tremble une seconde avant qu'il ne se lève. Comptez cette seconde."),
+        L("Une montagne qui marche, lente comme l'hiver, et tout aussi difficile à arrêter."),
+        L("Les mousses colonisent ses épaules : il est ici depuis très longtemps."),
+      } },
+    { mots = { "mage", "magi", "scribe", "copiste", "sorci", "dalaran", "invoc", "conjur", "enchante", "astral" },
+      txt = {
+        L("Il passe plus de temps dans les grimoires que dans la poussière des pistes."),
+        L("Ses sorts partent vite ; ses bottes de citadin, elles, partent plus vite encore."),
+        L("Le sol garde la trace de ses cercles d'invocation. N'y entrez jamais."),
+      } },
+    { mots = { "capitaine", "commandant", "seigneur", "sergent", "sœur", "soeur", "frère", "frere", "contremaître", "contremaitre", "exécut", "execut", "bourreau", "chef", "massacreur", "général", "general", "garde" },
+      txt = {
+        L("Il commande, il ne négocie pas. Son régiment le craint plus que l'ennemi."),
+        L("Une carrure d'armoire et une voix qui porte jusqu'au prochain camp."),
+        L("Il ne reculera pas : c'est écrit quelque part sur son uniforme, paraît-il."),
+      } },
+    { mots = { "serpent", "vipère", "vipere", "boa", "hydre", "anaconda", "slither" },
+      txt = {
+        L("Patient comme la vase : on le voit trop tard, jamais deux fois."),
+        L("Sa langue goûte l'air avant vos pas. Il sait déjà où vous passerez."),
+        L("Il ne poursuit personne. Il attend que le monde vienne à lui."),
+      } },
+    { mots = { "chauve", "harpi", "hippo", "wyvern", "chimère", "chimere", "aile", "vol" },
+      txt = {
+        L("Son ombre passe sur vous avant son cri. Regardez le ciel, pas le sol."),
+        L("Elle fond du haut des falaises, plus vite que l'arc ne se bande."),
+        L("Le vent des collines porte ses cris. Le silence, lui, annonce la charge."),
+      } },
+    { mots = { "limace", "boue", "sludge", "poisson", "rotheap", "marais", "nageur" },
+      txt = {
+        L("Une masse de vase et de viscères qui glisse là où l'eau s'arrête."),
+        L("Il pue à trois toises et mord à une. Tenez la distance, gardez le sol ferme."),
+        L("Ce qui le compose ne devrait pas marcher — et pourtant, ça traque."),
+      } },
+    { mots = { "gnoll", "hyène", "hyene" },
+      txt = {
+        L("Un rire de charognard dans la nuit, puis des crocs. Dans cet ordre."),
+        L("Il creuse moins de pièges que de fosses à cadavres. Choisissez votre camp."),
+        L("Sa meute le suit pour les restes. Le reste, c'est vous."),
+      } },
+    { mots = { "kobold", "trogg", "mineur", "terassier", "terrassier", "fossoyeur" },
+      txt = {
+        L("Vous ne lui prendrez pas sa bougie — ni sa galerie, si vous êtes sage."),
+        L("Il connaît chaque tunnel de la région. La sortie, c'est autre chose."),
+        L("Il creuse, il pille, il s'enfouit. La lumière du jour l'offusque."),
+      } },
+    { mots = { "naga", "sirène", "sirene", "vespia", "vespira", "azshara" },
+      txt = {
+        L("Une couronne d'écailles et de promesses noyées. Ne l'écoutez pas chanter."),
+        L("Elle règne sur un royaume de coquillages vides — et voudrait le vôtre."),
+        L("Elle vous traite en égal... jusqu'à ce que l'eau vous couvre la bouche."),
+      } },
+    { mots = { "anguille", "dilenaa", "serpent", "vipère", "vipere", "brochet", "poisson", "requin" },
+      txt = {
+        L("Un éclair d'écailles sous l'eau trouble : on ne le voit qu'au moment de mordre."),
+        L("Le lac garde ses secrets — et celui-là garde le lac. Méfiez-vous des remous."),
+        L("Souple comme une cravache et deux fois moins aimable. Ni l'acide ni les hameçons ne l'ont eu."),
+      } },
+    { mots = { "ours", "grizzli" },
+      txt = {
+        L("Une masse de muscles et de mauvaise humeur, réveillée trop tôt de son sommeil."),
+        L("Il défend son territoire à pattes plates et griffes sorties. Écartez-vous."),
+        L("Les baies des fourrés portent ses marques. Il n'est jamais loin de son garde-manger."),
+      } },
+}
+-- Famille par défaut : bête non classée, texte de chasse générique
+local MHH_NOTES_GEN_DEFAUT = {
+    L("Un gibier d'expérience : il a survécu à tous les chasseurs de la région. Pas à vous."),
+    L("Les vieux du coin baissent la voix quand on le nomme. C'est bon signe."),
+    L("Sa réputation court les pistes plus vite que lui. Ce carnet n'admettra que des preuves."),
+}
+local MHH_NOTES_ZONE = {
+    L(" Pistes fraîches côté "),
+    L(" Aperçu récemment vers "),
+    L(" Les voyageurs le croisent autour de "),
+}
+function MHH_NoteGeneree(nom)
+    if type(nom) ~= "string" or nom == "" then return nil end
+    local n = string.lower(nom)
+    local phrases = nil
+    for _, regle in ipairs(MHH_NOTES_GEN) do
+        for _, mot in ipairs(regle.mots) do
+            if string.find(n, mot, 1, true) then phrases = regle.txt break end
+        end
+        if phrases then break end
+    end
+    if not phrases then phrases = MHH_NOTES_GEN_DEFAUT end
+    local h = 0
+    for i = 1, #nom do h = h + string.byte(nom, i) * i end
+    local phrase = phrases[(h % #phrases) + 1]
+    local zone = MHH_CATALOGUE and MHH_CATALOGUE[nom]
+    if zone and zone ~= "?" and zone ~= "" then
+        local ztxt = MHH_NOTES_ZONE[(h % #MHH_NOTES_ZONE) + 1]
+        phrase = phrase .. ztxt .. zone .. "."
+    end
+    return phrase
+end
+
 
 -- Sensibilités par monstre (icônes de sorts du jeu, façon panneau faiblesses MH)
 -- Chemins d'icônes Classic ; à vérifier en jeu, on ajustera si l'une décoche
@@ -1378,6 +2007,12 @@ MHH_VIGNETTES = {
     ["Rotheap"]                  = "Ability_Hunter_Pet_Crab",
     ["Mor'Ladim"]                = "Spell_Shadow_RaiseDead",
     ["Bjarn"]                    = "Ability_Hunter_Pet_Bear",
+    ["Timber"]                   = "Ability_Hunter_Pet_Wolf",
+    ["Dishu"]                    = "Ability_Hunter_Pet_Cat",
+    ["Snort le Moqueur"]         = "Ability_Hunter_Pet_Hyena",
+    ["Azzere la Lame-des-cieux"] = "Ability_Hunter_Pet_WindSerpent",
+    ["Veuve-sangsue"]            = "Ability_Hunter_Pet_Spider",
+    ["Edan le Hurleur"]          = "Ability_Hunter_Pet_Owl",
     ["Grizzle Patte-des-neiges"] = "Ability_Hunter_Pet_Bear",
     ["Ursol'lok"]                = "Ability_Hunter_Pet_Bear",
     ["Araga"]                    = "Ability_Hunter_Pet_Wolf",
@@ -1428,6 +2063,10 @@ local function IconeGibier(nom)
 end
 
 -- Cartes façon Monster Hunter : dessin dédié par monstre dans le carnet.
+-- VIGNETTE « MYSTÈRE » : inconnu.tga dans ce même dossier = illustration
+-- des bêtes jamais rencontrées (ton interrogationmark3.jpg converti en
+-- TGA 128x128, 32 bits). Elle s'affiche légèrement grisée ; sans le
+-- fichier, repli gris sur l'icône de famille.
 -- Dépose tes TGA dans MHHunt\Textures\Vignettes\ puis décommente la ligne
 -- du monstre ci-dessous (une ligne = une carte). TGA carré, taille
 -- puissance de 2 (64x64 ou 128x128), 32 bits non compressé — comme tes
@@ -1464,7 +2103,17 @@ MHH_RARES_PAR_ID = {}
 -- sous TOUTES ses graphies (nom FR, nomEn, alias) pour matcher les noms
 -- réels vus en jeu ; seule la graphie « principale » de ce client doit
 -- apparaître dans les listes et les tirages — sinon doublon FR+EN.
+-- Versionning : v1.0 = version de SORTIE. En attendant, on est en
+-- pré-version 0.x — incrémenter la décimale à chaque jalon (icônes
+-- de gibier, ménagerie, etc.) jusqu'à la sortie.
+local MHH_VERSION = "0.60"
+
 MHH_NOM_AFFICHAGE = {}
+-- Traduction d'affichage EN -> FR (client FR uniquement) : quand le
+-- serveur appelle une bête par sa graphie ANGLAISE, l'affichage la
+-- remplace par le nom français du data file. Le matching, le comptage
+-- et la détection restent sous la graphie en jeu.
+MHH_AFFICHAGE_FR = {}
 -- Niveau et statut élite par bête (data file) : affichés sous le portrait
 MHH_NIVEAUX = {}
 MHH_ELITES = {}
@@ -1507,6 +2156,9 @@ if type(MHHuntData) == "table" then
             -- Graphie principale selon le client : c'est le seul nom
             -- affiché (listes, contrat du jour, comptages de zone)
             local principal = MHH_CLIENT_EN and (e.nomEn or e.nom) or (e.nom or e.nomEn)
+            if not MHH_CLIENT_EN and e.nom and e.nomEn and e.nom ~= e.nomEn then
+                MHH_AFFICHAGE_FR[e.nomEn] = e.nom
+            end
             for _, cle in ipairs(cles) do
                 MHH_CATALOGUE[cle] = ZonePourClient(e)
                 MHH_NOM_AFFICHAGE[cle] = principal
@@ -1525,6 +2177,15 @@ function MHH_EstNomAffichable(nom)
     return not MHH_NOM_AFFICHAGE[nom] or MHH_NOM_AFFICHAGE[nom] == nom
 end
 
+-- Nom AFFICHÉ : en client FR, une graphie anglaise connue du data file
+-- est rendue en français. Ailleurs (client EN, nom inconnu du data),
+-- le nom passe tel quel.
+function MHH_NomAffiche(nom)
+    if type(nom) ~= "string" then return nom end
+    if MHH_CLIENT_EN then return nom end
+    return MHH_AFFICHAGE_FR[nom] or nom
+end
+
 -- Identification automatique par NPC id : le GUID contient l'ID, qui ne
 -- dépend pas de la langue du client ni des traductions approximatives du
 -- serveur. Dès qu'une bête du data file est ciblée ou survolée, son nom
@@ -1534,292 +2195,114 @@ local function ApprendreParId(unite)
     if not guid then return end
     local idR = tonumber(guid:match("-(%d+)$"))
     if not idR or not MHH_RARES_PAR_ID[idR] then return end
-    local nom = UnitName(unite) or ""
-    if nom == "" or MHH_CATALOGUE[nom] or DB.decouverts[nom] then return end
+    local nom = NomOrdinaire(UnitName(unite))
+    -- v0.30 : nom secret (poison client) → impossible d'inscrire au carnet
+    if not nom or nom == "" then return end
     local e = MHH_RARES_PAR_ID[idR]
+    -- Le serveur appelle la bête autrement que le data file (ex. « Rochelance »
+    -- vs « Lance-de-roche ») : le nom VU EN JEU devient la graphie principale
+    -- (l'ancien reste une clé de matching, mais ne s'affiche plus). Sans ça,
+    -- la bête restait invisible au carnet : l'alias n'est jamais « affichable ».
+    if nom ~= "" and MHH_NOM_AFFICHAGE[nom] and MHH_NOM_AFFICHAGE[nom] ~= nom then
+        local ancienPrincipal = MHH_NOM_AFFICHAGE[nom]
+        MHH_NOM_AFFICHAGE[nom] = nom
+        MHH_NOM_AFFICHAGE[ancienPrincipal] = nom -- l'ancien pointe vers le nouveau
+    end
+    if nom == "" or MHH_CATALOGUE[nom] or DB.decouverts[nom] then return end
     MHH_CATALOGUE[nom] = e.zone
     MHH_NOM_AFFICHAGE[nom] = nom -- nom réel appris : graphie principale
     MHH_NIVEAUX[nom] = e.niveau
     MHH_ELITES[nom] = e.elite
     if e.x and e.y then MHH_COORDS[nom] = { e.x, e.y } end
     DB.decouverts[nom] = { kills = 0, vu = true, zone = e.zone, decouvert = time(), id = idR, nouveau = true }
+    DB.rencontres[nom] = DB.rencontres[nom] or time()
     DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Identifié par l'ID ") .. idR .. " : |cffffff00"
         .. nom .. "|r (" .. (e.nomEn or e.nom or "?") .. L(") — inscrit au carnet."))
     DebloquerSucces("decouverte")
+    MHH_VerifierRencontres(nom)
+end
+
+-- v0.119 : VÉRIFICATION DES SUCCÈS DE RENCONTRE — appelée à chaque
+-- première rencontre d'un rare. Compte les rares croisés (10 / 25) et
+-- vérifie si la RÉGION du rare croisé est complète (tous ses rares du
+-- data croisés, par graphie principale — les alias ne comptent qu'une fois).
+MHH_VerifierRencontres = function(nom)
+    if not (DB and DB.rencontres) then return end
+    local n = 0
+    for _ in pairs(DB.rencontres) do n = n + 1 end
+    if n >= 10 then DebloquerSucces("rencontres10") end
+    if n >= 25 then DebloquerSucces("rencontres25") end
+    if type(MHHuntData) ~= "table" then return end
+    local zone = (nom and MHH_CATALOGUE and MHH_CATALOGUE[nom]) or GetZoneText()
+    if not zone then return end
+    local total, vus = 0, 0
+    for _, e in ipairs(MHHuntData) do
+        if type(e) == "table" and e.zone and ZonePourClient(e) == zone then
+            local principal = e.nom or e.nomEn
+            if principal then
+                principal = MHH_NOM_AFFICHAGE[principal] or principal
+                total = total + 1
+                if DB.rencontres[principal] or DB.decouverts[principal] then
+                    vus = vus + 1
+                end
+            end
+        end
+    end
+    -- garde total >= 5 : une région triviale de 2-3 rares ne vaut pas succès
+    if total >= 5 and vus >= total then DebloquerSucces("regioncomplete") end
 end
 
 -- ============================================
 -- 3ter. MÉNAGERIE : spécimens capturables (pixel art)
 -- ============================================
--- La capture façon MH : tuer la bête pendant qu'elle est prise dans un
--- piège. Seuls ces spécimens rejoignent l'enclos (onglet Ménagerie).
+-- La capture (v0.64, simplifiée pour la sortie) : achever un spécimen
+-- pendant une chasse active suffit. Seuls ces spécimens rejoignent
+-- l'enclos (onglet Ménagerie).
 -- Dessin = grille 16x16, un caractère par pixel ('.' = transparent),
 -- palette par monstre. Rendu : textures SetColorTexture, aucune image.
-MHH_SPECIMENS = {
-    ["Humar le Seigneur hautain"] = {
-        famille = L("Félin"),
-        palette = { ["@"] = {0.05,0.04,0.06}, ["#"] = {0.14,0.12,0.14},
-                    ["o"] = {1.0,0.85,0.3}, ["+"] = {0.9,0.75,0.65} },
-        lignes = {
-            "................",
-            "....@@@.........",
-            "...@@@@@........",
-            "..@@###@@.......",
-            "..@#####@.......",
-            "..@##o##@.......",
-            "...##+##........",
-            "...@@@@@........",
-            "..@@#####@@.....",
-            ".+@@#######@....",
-            "+..#########....",
-            "...#########....",
-            "...#..#...#.....",
-            "...#..#...#.....",
-            "...#..#...#.....",
-            "................",
-        },
-    },
-    ["Takk le Bondisseur"] = {
-        famille = "Raptor",
-        palette = { ["@"] = {0.55,0.35,0.12}, ["#"] = {0.25,0.20,0.18},
-                    ["o"] = {1.0,0.9,0.2}, ["+"] = {0.5,0.42,0.3} },
-        lignes = {
-            "..............@.",
-            ".....@.......@@.",
-            "....@@......@#..",
-            "....@#.....@#...",
-            "....##o....@#...",
-            "....###...@#....",
-            "....+##..@##....",
-            ".....##@###.....",
-            "....########....",
-            "....#+######....",
-            ".....########...",
-            "......##..##....",
-            "......#....#....",
-            "......#....#....",
-            "......#....#....",
-            "................",
-        },
-    },
-    ["Mazzranache"] = {
-        famille = "Haut-traqueur",
-        palette = { ["@"] = {0.95,0.55,0.72}, ["#"] = {0.93,0.45,0.66},
-                    ["o"] = {1,1,1}, ["+"] = {1,0.8,0.25} },
-        lignes = {
-            "..@+............",
-            "..@o............",
-            "..@#............",
-            "..@#............",
-            "...@#...........",
-            "...@#...........",
-            "...@###@........",
-            "....#####.......",
-            "..#########.....",
-            "..##########....",
-            "..##########....",
-            "...#########....",
-            "...#..#..#......",
-            "...#..#..#......",
-            "...#..#..#......",
-            "................",
-        },
-    },
-    ["Sarkoth"] = {
-        famille = "Scorpide",
-        palette = { ["@"] = {0.35,0.22,0.10}, ["#"] = {0.5,0.35,0.15},
-                    ["o"] = {0.5,1.0,0.5}, ["+"] = {0.6,0.8,0.3} },
-        lignes = {
-            "................",
-            "................",
-            "............@@..",
-            "...........@+...",
-            "...........@....",
-            "..........@.....",
-            "..........@.....",
-            "..........@.....",
-            "@@@.....o@#@....",
-            "@.@#########....",
-            "@.@#########....",
-            "..@#########....",
-            "..##.##.##......",
-            "..#..#..#..#....",
-            "................",
-            "................",
-        },
-    },
-    ["Flagglemurk le Cruel"] = {
-        famille = "Murloc",
-        palette = { ["@"] = {0.18,0.42,0.24}, ["#"] = {0.30,0.62,0.35},
-                    ["o"] = {1,1,1}, ["+"] = {0.9,0.8,0.7} },
-        lignes = {
-            "......@.........",
-            ".....@..........",
-            "....#####.......",
-            "...##o##o##.....",
-            "...###+###......",
-            "...########.....",
-            "...########.....",
-            "..+########+....",
-            "....######......",
-            "....######......",
-            "....######......",
-            "....######......",
-            "....##..##......",
-            "....##..##......",
-            "....@#..#@......",
-            "................",
-        },
-    },
-    ["Naraxis"] = {
-        famille = L("Araignée"),
-        palette = { ["@"] = {0.30,0.07,0.32}, ["#"] = {0.48,0.12,0.5},
-                    ["o"] = {1,0.3,0.3} },
-        lignes = {
-            "................",
-            "........@.......",
-            ".@@....##....@@.",
-            "..@...####...@..",
-            "..@..##o##..@...",
-            "...@.######.@...",
-            "...@.######.@...",
-            "..@..######..@..",
-            ".@...######...@.",
-            ".@...######...@.",
-            "..@...####...@..",
-            "...@@......@@...",
-            "................",
-            "................",
-            "................",
-            "................",
-        },
-    },
-    ["Snarlflare"] = {
-        famille = "Dragonnet",
-        palette = { ["@"] = {0.45,0.15,0.12}, ["#"] = {0.16,0.13,0.14},
-                    ["o"] = {1,0.5,0.1}, ["+"] = {0.85,0.4,0.15} },
-        lignes = {
-            "................",
-            "......@....@....",
-            "......@@..@@....",
-            ".....@@@.@@@....",
-            "...#o##@@@......",
-            "...####.@@......",
-            "...+####@.......",
-            "....########....",
-            "....#########...",
-            "....+#########..",
-            ".....##########.",
-            "......##...##...",
-            "......##...##...",
-            "......##...##...",
-            "................",
-            "................",
-        },
-    },
-    ["Mor'Ladim"] = {
-        famille = "Mort-vivant",
-        palette = { ["@"] = {0.75,0.72,0.6}, ["#"] = {0.92,0.9,0.8},
-                    ["o"] = {0.35,0.7,1.0}, ["+"] = {0.6,0.6,0.68} },
-        lignes = {
-            "................",
-            "....@@@.........",
-            "...@o#o@........",
-            "...@###@........",
-            "....@@@.........",
-            "...@###@.@......",
-            "..@#####@#......",
-            "..@##+##@#......",
-            "..@##+##@#......",
-            "..@#####@#......",
-            "...#####@#......",
-            "....#.#..#......",
-            "....#.#..#......",
-            "....#.#..#......",
-            "...@#.#@.#@.....",
-            "................",
-        },
-    },
-    ["Capitaine Croc-Plat"] = {
-        famille = "Sanglier",
-        palette = { ["@"] = {0.10,0.07,0.05}, ["#"] = {0.45,0.30,0.18},
-                    ["o"] = {1,0.95,0.85} },
-        lignes = {
-            "................",
-            "...@@...........",
-            "..@##@..........",
-            "..@###@.....@...",
-            ".@o####@....@#..",
-            ".@######@...@##.",
-            "@########@..@##.",
-            "@#########@.@##.",
-            "@##########@##@.",
-            "@###@@########@.",
-            ".@###@..@#####@.",
-            ".@#####@#####@..",
-            "..@##@.@###@o@..",
-            "...@@..@##@.@...",
-            "........@@..@...",
-            "................",
-        },
-    },
-    ["Grand crocolisque du loch"] = {
-        famille = "Crocolisque",
-        palette = { ["@"] = {0.05,0.12,0.08}, ["#"] = {0.25,0.45,0.25},
-                    ["o"] = {1,1,1}, ["+"] = {0.55,0.70,0.45} },
-        lignes = {
-            "................",
-            ".............@..",
-            "....@@......@#..",
-            "...@##@....@##..",
-            "..@o##@...@##...",
-            ".@######@@##@...",
-            "@#############..",
-            "@##+#########@..",
-            ".@##+########@..",
-            ".@###@######@...",
-            "..@o@@..@##@o...",
-            "..@@..@#@..@....",
-            "....@#.@#..@#...",
-            "....@#.@#...@#..",
-            ".....@..@...@#..",
-            "................",
-        },
-    },
+-- PIÈGES DE CAPTURE (auras de CONTRÔLE) : le monstre achevé pendant qu'il
+-- est tenu (racine, stun, incapacite, metamorphose, peur, ban) est capturé
+-- pour la ménagerie. Ouvert à toutes les classes qui contrôlent.
+-- GLOBALE préfixée (limite 200 locales du chunk).
+MHH_PIEGES_CAPTURE = {
+    -- Racines / immobilisations
+    [3355] = true,                                   -- Piège de glace (chasseur)
+    [339] = true, [1062] = true, [5195] = true,       -- Entrave de la nature (druide)
+    [5196] = true, [9852] = true, [9853] = true,
+    [122] = true, [865] = true, [6131] = true, [10230] = true, -- Nova de givre (mage)
+    -- Stuns
+    [1833] = true,                                   -- Coup bas (voleur)
+    [408] = true, [8643] = true,                      -- Aiguillon vital (voleur)
+    [5211] = true, [6798] = true, [8983] = true,       -- Fracasser (druide)
+    [9005] = true,                                    -- Traquenard (druide)
+    [853] = true, [5588] = true, [5589] = true, [25773] = true, -- Marteau de la justice (paladin)
+    [20549] = true,                                   -- Piétinement de guerre (tauren)
+    [20253] = true,                                   -- Interception (guerrier)
+    [7922] = true,                                    -- Charge (guerrier)
+    [12809] = true,                                   -- Coup concussionnaire (guerrier)
+    -- Incapacites / metamorphoses
+    [1776] = true,                                    -- Coup sournois (voleur)
+    [51724] = true, [1423] = true, [1424] = true,      -- Sap (voleur, id Classic + 1.12)
+    [2094] = true,                                    -- Aveuglement (voleur)
+    [19503] = true,                                   -- Tir de dispersion (chasseur)
+    [118] = true, [12824] = true, [12825] = true, [12826] = true, -- Metamorphose (mage)
+    [2637] = true, [18657] = true, [18658] = true,     -- Hibernation (druide)
+    -- Peur / ban
+    [5782] = true, [6213] = true, [6215] = true,       -- Peur (demoniste)
+    [5484] = true,                                    -- Hurlement terrifiant (demoniste)
+    [6789] = true,                                    -- Mort terrible (demoniste)
+    [6358] = true,                                    -- Seduction (succube)
+    [710] = true, [18647] = true,                      -- Bannissement (demoniste)
+    [5246] = true,                                    -- Cri d'intimidation (guerrier)
+    [8122] = true, [8124] = true, [10888] = true,      -- Cri psychique (pretre)
+    [9484] = true, [10955] = true, [10909] = true,     -- Entrave des morts (pretre)
 }
--- Ordre stable d'affichage dans l'enclos
-MHH_SPECIMENS_ORDRE = {
-    "Humar le Seigneur hautain", "Takk le Bondisseur",
-    "Mazzranache", "Sarkoth", "Flagglemurk le Cruel", "Naraxis",
-    "Snarlflare", "Mor'Ladim",
-    "Capitaine Croc-Plat", "Grand crocolisque du loch",
-}
+-- ===== DONNÉES SPECIMENS/ENCLOS : EXTRAITES (v0.68) =====
+-- MHH_SPECIMENS, MHH_SPECIMENS_ORDRE, MHH_ENCLOS et les index
+-- dérivés (MHH_ENCLOS_DU_SPECIMEN, MHH_ENCLOS_RANG,
+-- MHH_ENCLOS_INDEX) vivent dans Specimens.lua, chargé APRÈS ce
+-- fichier (voir .toc) — ils n'utilisent que MHH_L.
 
--- ENCLOS PAR BIOME : chaque pensionnaire vit dans le biome de son habitat.
--- Un enclos se DÉBLOQUE au fil du rang de guilde — le régisseur agrandit
--- le ranch. Le fond de l'enclos change avec le biome sélectionné.
-MHH_ENCLOS = {
-    { cle = "savane",   nom = L("Enclos de la savane"),   rang = 1,
-      specimens = { "Humar le Seigneur hautain", "Takk le Bondisseur",
-                    "Mazzranache", "Sarkoth" } },
-    { cle = "marais",   nom = L("Enclos des marais"),     rang = 2,
-      specimens = { "Flagglemurk le Cruel", "Naraxis",
-                    "Grand crocolisque du loch" } },
-    { cle = "montagne", nom = L("Enclos des montagnes"), rang = 3,
-      specimens = { "Capitaine Croc-Plat", "Snarlflare", "Mor'Ladim" } },
-    { cle = "volcan",   nom = L("Enclos du volcan"),     rang = 4,
-      specimens = {} }, -- les pensionnaires y sont déplacés à la main
-}
--- Zone d'un spécimen (habitat) -> enclos de rattachement
-MHH_ENCLOS_DU_SPECIMEN = {}
-for _, enc in ipairs(MHH_ENCLOS) do
-    for _, nom in ipairs(enc.specimens) do
-        MHH_ENCLOS_DU_SPECIMEN[nom] = enc.cle
-    end
-end
--- Rang de guilde requis pour un enclos (par clé)
-MHH_ENCLOS_RANG = {}
-for i, enc in ipairs(MHH_ENCLOS) do MHH_ENCLOS_RANG[enc.cle] = enc.rang end
 
 -- ============================================
 -- 4. RANGS DE GUILDE, NOTES, ÉTAT DE CHASSE
@@ -1831,20 +2314,114 @@ local chasseActive = nil   -- nom du monstre chassé
 local MHH_ArreterMusique
 local MHH_JouerMusique
 local JouerJingleVictoire -- carillon « quête terminée » (SoundKit 619), section musiques
-local ZoneAvecAmiDevoue -- affinité ménagerie : bonus de zone (section ménagerie)
-local Affinite -- jauge d'affinité d'un pensionnaire (section ménagerie)
+local FinChasseVictoire -- déclaration anticipée : AnnoncerSuspension (différé) valide une prise manquée
 local dernierJingleTemps -- horodatage du dernier carillon (protège le cut SFX différé)
 -- Chasse suspendue (cible perdue hors combat, bête enfuie) : on garde tout
 -- pour REPRENDRE la chasse là où elle en était si on re-cible la bête
 -- rapidement — le chrono n'est PAS remis à zéro.
 local chasseSuspendue = nil -- { nom, debutTemps, debutVie, niveau, rare, piegee }
 local chasseDebutVie = nil -- vie du chasseur au début de la chasse
+
+-- v0.24 : lecture TEXTUELLE d'une valeur protégée. Le secret de ce
+-- client déclare type() = « number » mais EMPISONNE les comparaisons
+-- (la dichotomie de NombreOrdinaire rend nil sans erreur visible).
+-- S'il laisse passer tostring, on lit la valeur telle quelle et on
+-- la parse — c'est la seule arme restante contre un faux nombre.
+local function ParseSecret(s)
+    -- v0.26 : boîte à outils 4 techniques contre les « secret strings » —
+    -- tout est pcall, la bibliothèque string est appelée en FONCTION.
+    if s == nil then return nil end
+    local okN, n = pcall(tonumber, s)
+    if okN and type(n) == "number" and n > 0 then return n end
+    local okM, m = pcall(string.match, s, "%-?%d+%.?%d*")
+    if okM and type(m) == "string" then
+        local okT, v = pcall(tonumber, m)
+        if okT and type(v) == "number" and v > 0 then return v end
+    end
+    local okF, f = pcall(string.format, "%s", s)
+    if okF and type(f) == "string" then
+        local okFM, fm = pcall(string.match, f, "%-?%d+%.?%d*")
+        if okFM and type(fm) == "string" then
+            local okT, v = pcall(tonumber, fm)
+            if okT and type(v) == "number" and v > 0 then return v end
+        end
+    end
+    local okC, c = pcall(function() return "" .. s end)
+    if okC and type(c) == "string" then
+        local okCM, cm = pcall(string.match, c, "%-?%d+%.?%d*")
+        if okCM and type(cm) == "string" then
+            local okT, v = pcall(tonumber, cm)
+            if okT and type(v) == "number" and v > 0 then return v end
+        end
+    end
+    return nil
+end
+
+-- v0.30 : ce client peut renvoyer un NOM D'UNITÉ en « secret string »
+-- (observé au tab-targeting en donjon) : impossible à utiliser comme clé
+-- de table — « attempted to index a table that cannot be indexed with
+-- secret keys ». Le test pcall ci-dessous le détecte en une indexation
+-- jetable ; les comparaisons ==, elles, restent autorisées.
+local function NomOrdinaire(nom)
+    if type(nom) ~= "string" then return nil end
+    local ok = pcall(function() local t = {} t[nom] = true end)
+    return ok and nom or nil
+end
+
+local function LireSecretTexte(unite, un)
+    un = un or "target"
+    local ok, s = pcall(function() return tostring(unite and unite(un)) end)
+    if not ok then return nil end
+    return ParseSecret(s)
+end
 local chasseVieTouchee = false -- vie passée sous son niveau de départ (suivi UNIT_HEALTH)
 local chasseNiveau = nil   -- niveau du monstre chassé
+local chasseRayon = nil    -- rayon de hitbox mesuré à l'engagement (repli)
+-- Secret numbers de Midnight (UnitBoundingRadius & co.) : les
+-- COMPARAISONS sont permises, l'ARITHMÉTIQUE est interdite — un
+-- pcall autour d'une multiplication échoue en silence et le gabarit
+-- n'est jamais enregistré. NombreOrdinaire() reconvertit une telle
+-- valeur en nombre Lua ordinaire par DICHOTOMIE : des comparaisons
+-- pures (aucune opération sur la valeur secrète) suffisent.
+-- v0.22 : un secret peut être une TABLE (ou userdata) avec
+-- métaméthodes __lt/__le — type(x) vaut alors « table », pas
+-- « number », et l'ancien garde rejetait des valeurs pourtant
+-- COMPARABLES (d'où « src=rien vh=nil » en debug). On accepte
+-- désormais tout ce qui se compare. La plage est DYNAMIQUE :
+-- un rayon de hitbox tient dans 0–64, mais des points de vie
+-- montent aux dizaines de milliers — on double la borne haute
+-- jusqu'à encadrer la valeur (jusqu'à ~1e9).
+local function NombreOrdinaire(x)
+    if x == nil then return nil end
+    local ok, r = pcall(function()
+        local bas, haut = 0.0, 64.0
+        -- v0.23 : 40 doublements (plafond ~7e13) — sur un serveur
+        -- custom, les PV d'un mob peuvent pulvériser l'ancien
+        -- plafond de ~1e9, et la dichotomie rendait nil sans raison
+        -- apparente (brut=number mais vh=nil en debug).
+        for _ = 1, 40 do
+            if x >= haut then
+                bas, haut = haut, haut * 2
+            else
+                break
+            end
+        end
+        if x >= haut then return nil end -- hors plage (> ~7e13)
+        for _ = 1, 24 do
+            local milieu = (bas + haut) / 2
+            if x >= milieu then bas = milieu else haut = milieu end
+        end
+        return bas
+    end)
+    return ok and r or nil
+end
 local chasseRare = false   -- le monstre chassé est-il rare ?
 local chasseDebutTemps = nil -- début du chronomètre
 local chassePiegee = false   -- le monstre est-il pris dans un piège ?
 local dernierTrigger = {} -- anti-spam bannière (30 s par monstre)
+local dernierePrise = {} -- horodatage de la DERNIÈRE validation d'une prise
+-- par monstre : empêche de re-chasser le CADAVRE dans la minute qui suit
+-- la victoire (double comptage des kills quand UnitIsDead capote).
 -- Indicateur « EN CHASSE » près du bouton minimap (défini plus bas, section Minimap)
 local MettreAJourIndicateur = function() end
 
@@ -1868,8 +2445,65 @@ MHH_BanniereVisible = function() return banniere:IsShown() end
 -- de mort — pour savoir QUI valide ou rate la prise quand ça coince.
 local function DebugChasse(canal, texte)
     if DB and DB.config and DB.config.debug then
-        DEFAULT_CHAT_FRAME:AddMessage("|cff6aaaff[MH Hunt DBG]|r " .. canal .. " — " .. tostring(texte))
+        DEFAULT_CHAT_FRAME:AddMessage("|cff6aaaff[MH Hunt DBG]|r " .. MHH_VERSION ..
+            " " .. canal .. " — " .. tostring(texte))
     end
+end
+
+local suspendAnnonce = {} -- [nom] = true si le message de suspension a
+-- RÉELLEMENT été affiché (les suspensions sont annoncées en différé :
+-- une bête qui meurt sous DoT juste après la perte de cible ne doit
+-- pas générer « suspendue… reprise… réussie » en rafale).
+-- Annonce de suspension RETARDÉE (3 s) : si la bête meurt entre-temps,
+-- si la chasse reprend ou se conclut, le message n'est jamais envoyé.
+local function AnnoncerSuspension(nom, libelle)
+    if not (C_Timer and C_Timer.After) then
+        suspendAnnonce[nom] = true
+        DEFAULT_CHAT_FRAME:AddMessage(libelle)
+        return
+    end
+    C_Timer.After(3, function()
+        local fausseAlerte = false
+        -- Suspension annulée entre-temps ? (prise, échec, reprise, autre chasse)
+        if chasseActive == nom then return end
+        if not chasseSuspendue or chasseSuspendue.nom ~= nom then return end
+        if dernierePrise[nom] and time() - dernierePrise[nom] < 6 then return end
+        -- Le chasseur s'est RE-ENGAGÉ (combat) ou a re-ciblé la bête ?
+        -- La fuite était une fausse alerte : silence, la chasse suit son cours.
+        pcall(function()
+            if UnitAffectingCombat("player") then fausseAlerte = true end
+            if UnitExists("target") and (UnitName("target") or "") == nom then fausseAlerte = true end
+        end)
+        if fausseAlerte then return end
+        -- DERNIER FILET : la bête est morte sous un des viseurs ? Le scan
+        -- de fin de combat l'avait ratée (cadavre apparu/despawné trop
+        -- vite) — la prise est RÉELLE : on restaure l'état suspendu et
+        -- on la valide, au lieu d'annoncer une fausse fuite.
+        local morte = false
+        pcall(function()
+            for _, u in ipairs({ "target", "mouseover", "focus", "pettarget",
+                "party1target", "party2target", "party3target", "party4target" }) do
+                if UnitExists(u) and (UnitName(u) or "") == nom
+                    and UnitIsDead(u) then morte = true end
+            end
+        end)
+        if morte then
+            local etat = chasseSuspendue
+            chasseActive = nom
+            chasseDebutTemps = etat.debutTemps
+            chasseDebutVie = etat.debutVie
+            chasseNiveau = etat.niveau
+            chasseRare = etat.rare
+            chassePiegee = etat.piegee
+            chasseVieTouchee = etat.vieTouchee == true
+            chasseSuspendue = nil
+            DebugChasse("suspension", nom .. L(" — cadavre repéré au dernier filet différé : prise !"))
+            FinChasseVictoire(nom)
+            return
+        end
+        suspendAnnonce[nom] = true
+        DEFAULT_CHAT_FRAME:AddMessage(libelle)
+    end)
 end
 
 function AfficherBanniere(texte, r, g, b) -- globale : appelable depuis /hunt test
@@ -1885,6 +2519,16 @@ local function DebutChasse(nom, classification, niveau)
     -- Pas de chasse pour un fantôme : être mort et cibler la bête ne
     -- compte pas (ni chrono, ni musique).
     if UnitIsDeadOrGhost("player") then return end
+    -- ANTI-CADAVERE : prise validée il y a moins de 60 s sur CE monstre ?
+    -- C'est son cadavre qui re-traîne (re-ciblage, filet viseur) — une
+    -- bête morte une fois ne se prend pas deux fois. Les 30 s de
+    -- dernierTrigger sont réarmées à la victoire, ce garde est le seul
+    -- rempart fiable quand UnitIsDead échoue sur les cadavres (client
+    -- custom : Toison d'or comptée double par ce trou).
+    if nom and dernierePrise[nom] and time() - dernierePrise[nom] < 60 then
+        DebugChasse("antirechasse", nom .. L(" — prise < 60 s, chasse refusée"))
+        return
+    end
     -- Pas de chasse sur un CADAVRE : re-cibler la bête morte juste après
     -- la victoire relançait une chasse que le filet « morte sous le
     -- viseur » validait aussitôt — prises fantômes dans le compteur.
@@ -1910,9 +2554,13 @@ local function DebutChasse(nom, classification, niveau)
         -- (DoT finissants), le message tombait en pleine action, pile
         -- quand le chrono « continuait » tout seul. Hors combat, la
         -- reprise reste annoncée.
-        if not UnitAffectingCombat("player") then
+        -- Reprise annoncée UNIQUEMENT si la suspension l'a été : une
+        -- suspension passée inaperçue (bête morte sous DoT juste après)
+        -- ne doit pas donner « Chasse reprise » juste avant « réussie ».
+        if not UnitAffectingCombat("player") and suspendAnnonce[nom] then
             DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffa0ff50Chasse reprise :|r " .. nom .. L(" — le chrono continue."))
         end
+        suspendAnnonce[nom] = nil
         MettreAJourIndicateur()
         if MHH_LancerMusiqueCombat then MHH_LancerMusiqueCombat() end
         return
@@ -1923,10 +2571,37 @@ local function DebutChasse(nom, classification, niveau)
     local maintenant = time()
     if dernierTrigger[nom] and maintenant - dernierTrigger[nom] < 30 then return end
     dernierTrigger[nom] = maintenant
+    -- Zone RÉELLE du client : le data file peut nommer la zone autrement
+    -- que le serveur (« Hiverpré » vs « Berceau-de-l'hiver ») — la bête
+    -- restait introuvable dans l'onglet de SA vraie zone. On adopte le
+    -- nom renvoyé par GetZoneText() à l'engagement : la bête chassée
+    -- est dans son habitat à ce moment-là.
+    pcall(function()
+        local zc = GetZoneText()
+        if zc and zc ~= "" and MHH_CATALOGUE[nom] and MHH_CATALOGUE[nom] ~= zc then
+            DebugChasse("zone", nom .. " : " .. tostring(MHH_CATALOGUE[nom]) .. " → " .. zc)
+            MHH_CATALOGUE[nom] = zc
+        end
+    end)
     chasseActive = nom
     chasseDebutVie = UnitHealth("player")
+    -- [Retiré v0.29] PV de la cible à l'engagement + sondes de santé
+    -- supprimés : ce client verrouille tout accès aux PV des mobs.
     chasseVieTouchee = false -- nouveau départ : remise à zéro du suivi
-    chasseNiveau = niveau
+    chasseNiveau = LireSecretTexte(UnitLevel) or NombreOrdinaire(niveau)
+    -- v0.25 : UnitLevel peut être empoisonné comme UnitHealth (type
+    -- menteur, comparaisons interdites). On convertit ICI, cible
+    -- vivante, par le texte puis la dichotomie — plus tard dans la
+    -- chasse, chasseNiveau doit être un NOMBRE ORDINAIRE (comparé à
+    -- nivMax/nivMin, au niveau du joueur… un secret ferait tout
+    -- capoter en silence, dont le repli « estimation » du gabarit.
+    -- Rayon de hitbox capturé TANT QUE LA CIBLE EST VIVANTE : à la mort,
+    -- le client peut avoir libéré la cible — le repli sauve la mesure.
+    chasseRayon = nil
+    pcall(function()
+        local b = UnitBoundingRadius and UnitBoundingRadius("target")
+        if type(b) == "number" and b > 0 then chasseRayon = NombreOrdinaire(b) end
+    end)
     chasseRare = (classification == "rare" or classification == "rareelite")
     chasseDebutTemps = maintenant
     chassePiegee = false
@@ -1944,8 +2619,22 @@ local function DebutChasse(nom, classification, niveau)
     -- pas le rugissement — réservé aux contrats et missions
     if DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_READY_CHECK or 8960) end
     -- Bandeau « EN CHASSE » éphémère : 4 s à la sélection, puis il
-    -- s'efface en fondu — reste seulement le mini chrono en coin
-    if BandeauChasseEphemer then BandeauChasseEphemer() end
+    -- s'efface en fondu — reste seulement le mini chrono en coin.
+    -- COURTOISIE INVERSE : la 1re découverte d'un rare affiche son
+    -- toast pile au moment de l'engagement — le bandeau ATTEND la
+    -- fin des toasts avant d'apparaître (jamais de chevauchement).
+    local function MontrerBandeauChasse()
+        if toastEnCours then
+            C_Timer.After(0.5, MontrerBandeauChasse)
+            return
+        end
+        if BandeauChasseEphemer then BandeauChasseEphemer() end
+    end
+    if C_Timer and C_Timer.After then
+        MontrerBandeauChasse()
+    elseif BandeauChasseEphemer then
+        BandeauChasseEphemer()
+    end
     -- La musique de combat démarre dès la sélection du gibier
     if MHH_LancerMusiqueCombat then MHH_LancerMusiqueCombat() end
 end
@@ -2006,7 +2695,7 @@ MHH_MISSIONS = {
     {
         id = "veuve_brume", titre = L("La veuve de la brume"), pnj = "Barnil Stonepot",
         citation = L("Je ne chasse plus, moi, je porte les affaires. Mais pour celle-là… j'aimerais lire la fin du carnet."),
-        cible = "Veuve de la Brume-noire", zone = "Marécage d'Âprefange",
+        cible = "Veuve de Sombrebrume", zone = "Marécage d'Âprefange",
         condition = L("Tisse ses toiles quand la pluie bat le marais"),
         meteo = "rain", -- vérifiée EN DIRECT via C_Weather (client Forever)
         points = 125, recompense = L("Mule de Barnil pour un voyage (clin d'œil)"),
@@ -2078,7 +2767,390 @@ local function sousClasseDe(ref)
     return sous
 end
 
-local function FinChasseVictoire(nom)
+-- TYPES D'ARMES canoniques (client FR) : l'histogramme affiche TOUS ces
+-- types, même à 0 — un chasseur voit d'un coup d'œil ses armes de prédilection
+-- et celles qu'il n'a jamais utilisées.
+MHH_TYPES_ARMES = {
+    "Dagues", "Epées", "Epées à deux mains", "Masses", "Masses à deux mains",
+    "Haches", "Haches à deux mains", "Armes de pugilat", "Armes d'hast",
+    "Arcs", "Arbalètes", "Bâtons", "Baguettes", "Armes à feu",
+}
+-- ARMES PAR CLASSE (compétences d'armes Vanilla) : l'histogramme ne montre
+-- que les types EFFECTIVEMENT utilisables par la classe du chasseur — un
+-- voleur n'a pas de fusil ni de hallebarde, inutile de les afficher.
+MHH_ARMES_PAR_CLASSE = {
+    WARRIOR = { "Dagues", "Epées", "Epées à deux mains", "Masses", "Masses à deux mains",
+                "Haches", "Haches à deux mains", "Armes de pugilat", "Armes d'hast", "Arcs", "Armes à feu" },
+    PALADIN = { "Masses", "Masses à deux mains", "Epées", "Epées à deux mains",
+                "Haches", "Haches à deux mains", "Armes d'hast" },
+    HUNTER = { "Arcs", "Arbalètes", "Armes à feu", "Haches", "Haches à deux mains",
+                "Epées", "Epées à deux mains", "Armes de pugilat", "Dagues", "Armes d'hast" },
+    ROGUE = { "Dagues", "Epées", "Masses", "Armes de pugilat", "Arbalètes", "Armes à feu", "Arcs" },
+    PRIEST = { "Baguettes", "Masses", "Dagues" },
+    SHAMAN = { "Masses", "Masses à deux mains", "Haches", "Haches à deux mains",
+                "Dagues", "Armes de pugilat", "Bâtons" },
+    MAGE = { "Baguettes", "Bâtons", "Epées", "Dagues" },
+    WARLOCK = { "Baguettes", "Epées", "Dagues", "Bâtons" },
+    DRUID = { "Dagues", "Masses", "Masses à deux mains", "Bâtons", "Armes de pugilat", "Epées à deux mains" },
+}
+-- Types d'armes affichés pour CE chasseur (sa classe ; repli : tout)
+MHH_TYPES_ARMES_JOUEUR = nil
+local function MHH_TypesArmesJoueur()
+    if MHH_TYPES_ARMES_JOUEUR then return MHH_TYPES_ARMES_JOUEUR end
+    local liste = nil
+    pcall(function()
+        local _, token = UnitClass("player")
+        liste = MHH_ARMES_PAR_CLASSE[(token or ""):upper()]
+    end)
+    MHH_TYPES_ARMES_JOUEUR = liste or MHH_TYPES_ARMES
+    return MHH_TYPES_ARMES_JOUEUR
+end
+
+-- Libellés COURTS (affichés horizontalement sous chaque colonne — pas de
+-- rotation en Vanilla, les noms complets ne tiendraient pas)
+MHH_TYPES_ARMES_COURT = {
+    ["Dagues"] = "Dague", ["Epées"] = "Epee",
+    ["Epées à deux mains"] = "Epee2M", ["Masses"] = "Masse",
+    ["Masses à deux mains"] = "Masse2M", ["Haches"] = "Hache",
+    ["Haches à deux mains"] = "Hache2M", ["Armes de pugilat"] = "Poing",
+    ["Armes d'hast"] = "Hast", ["Arcs"] = "Arc",
+    ["Arbalètes"] = "Arb.", ["Bâtons"] = "Baton",
+    ["Baguettes"] = "Bagu.", ["Armes à feu"] = "Fusil",
+}
+-- v0.36 : icône par type d'arme façon Monster Hunter (à la place des
+-- libellés verticaux). Mode custom : Textures/arme_<cle>.tga ; sinon
+-- l'icône du jeu ; types sans icône connue → ancien libellé vertical.
+MHH_CLE_ICONE_ARME = {
+    ["Dagues"] = "dague", ["Epées"] = "epee", ["Epées à deux mains"] = "epee2m",
+    ["Masses"] = "masse", ["Masses à deux mains"] = "masse2m",
+    ["Haches"] = "hache", ["Haches à deux mains"] = "hache2m",
+    ["Armes de pugilat"] = "poing", ["Armes d'hast"] = "hast",
+    ["Arcs"] = "arc", ["Arbalètes"] = "arbalete", ["Bâtons"] = "baton",
+    ["Baguettes"] = "baguette", ["Armes à feu"] = "fusil",
+}
+-- v0.40 : fichiers renommés par le chasseur (extraits Photopea) :
+-- Textures/Weapons/weapon_<nom>.tga — table de correspondance clé→nom.
+MHH_FICHIER_ARME = {
+    ["dague"] = "dagger", ["epee"] = "sword", ["epee2m"] = "sword",
+    ["masse"] = "mace", ["masse2m"] = "mace", ["hache"] = "axe",
+    ["hache2m"] = "axe", ["poing"] = "gloves", ["hast"] = "lance",
+    ["arc"] = "bow", ["arbalete"] = "crossbow", ["baton"] = "staff",
+    ["baguette"] = "rode", ["fusil"] = "rifle",
+}
+MHH_ICONES_ARMES_WOW = {
+    ["Dagues"] = "Interface\\Icons\\INV_Sword_04",
+    ["Epées"] = "Interface\\Icons\\INV_Sword_06",
+    ["Epées à deux mains"] = "Interface\\Icons\\INV_Sword_08",
+    ["Masses"] = "Interface\\Icons\\INV_Mace_01",
+    ["Masses à deux mains"] = "Interface\\Icons\\INV_Mace_02",
+    ["Haches"] = "Interface\\Icons\\INV_Axe_01",
+    ["Haches à deux mains"] = "Interface\\Icons\\INV_Axe_03",
+    ["Arcs"] = "Interface\\Icons\\INV_Weapon_Bow_01",
+    ["Armes à feu"] = "Interface\\Icons\\INV_Weapon_Rifle_02",
+    ["Bâtons"] = "Interface\\Icons\\INV_Staff_02",
+    ["Baguettes"] = "Interface\\Icons\\INV_Wand_01",
+}
+-- v0.36 : variante « à deux mains » d'une famille (départage par la
+-- ligne « deux mains » du tooltip)
+MHH_VARIANTES_2M = {
+    ["Epées"] = "Epées à deux mains", ["Masses"] = "Masses à deux mains",
+    ["Haches"] = "Haches à deux mains",
+}
+-- v0.38 : à l'AFFICHAGE, 1M et 2M vivent dans le même « sac » (une épée
+-- est une épée) — le comptage interne reste DISTINCT, seules les
+-- colonnes de l'histogramme sont regroupées (moins de colonnes, plus
+-- lisible ; réversible, aucune donnée perdue)
+MHH_GROUPE_ARME = {
+    ["Epées à deux mains"] = "Epées",
+    ["Masses à deux mains"] = "Masses",
+    ["Haches à deux mains"] = "Haches",
+}
+-- Normalisation : le client FR écrit parfois « Epées » ou « Épées » (accent),
+-- et le tooltip peut coller la classe de l'arme en majuscules.
+-- Type d'arme deviné depuis le NOM de l'objet (« Dague de chagrin » →
+-- « Dagues »). Dernière source de détection : sur ce client GetItemInfo
+-- est nil ET le tooltip n'a AUCUNE ligne de sous-classe (diagnostic
+-- /hunt armes : nom / niveau / lié / à une main / dégâts — sans « Dagues »).
+-- Le nom des armes FR commence presque toujours par le type — c'est le
+-- seul indice restant, et il est fiable.
+local MHH_MOTS_NOM_ARME = {
+    { "deux mains", nil }, -- traité à part ci-dessus (variantes 2M)
+    { "dague", "Dagues" },
+    { "poignard", "Dagues" }, { "kriss", "Dagues" }, { "stylet", "Dagues" },
+    { "massue", "Masses" }, { "gourdin", "Masses" }, { "maillet", "Masses" },
+    { "arbalète", "Arbalètes" }, { "arbalete", "Arbalètes" },
+    { "baguette", "Baguettes" },
+    { "épée", "Epées" }, { "epee", "Epées" },
+    { "masse", "Masses" },
+    { "hache", "Haches" },
+    { "hallebarde", "Armes d'hast" }, { "lance", "Armes d'hast" },
+    { "fusil", "Armes à feu" },
+    { "bâton", "Bâtons" }, { "baton", "Bâtons" },
+    { "poing", "Armes de pugilat" },
+    -- v0.36 : noms FR exotiques qui ne contiennent PAS le type — le
+    -- « Fendoir » d'un nain est une hache, mais rien dans le mot ne le
+    -- dit ; idem espadon (épée 2M), serpe, faux, arquebuse…
+    { "fendoir", "Haches" },
+    { "espadon", "Epées à deux mains" },
+    { "cimeterre", "Epées" }, { "sabre", "Epées" }, { "rapière", "Epées" },
+    { "morgenstern", "Masses" }, { "fléau", "Masses" }, { "marteau", "Masses" },
+    { "serpe", "Dagues" },
+    { "faux", "Armes d'hast" }, { "faucille", "Armes d'hast" },
+    { "pique", "Armes d'hast" }, { "javelot", "Armes d'hast" },
+    { "arquebuse", "Armes à feu" }, { "pistolet", "Armes à feu" },
+    { "griffes", "Armes de pugilat" }, { "gantelet", "Armes de pugilat" },
+    { "arc", "Arcs" }, -- en dernier : « arc » est court
+}
+local function NomVersTypeArme(nom)
+    if type(nom) ~= "string" or nom == "" then return nil end
+    local bas = string.lower(nom)
+    -- Variantes à deux mains : le nom le précise (« ... à deux mains »)
+    if string.find(bas, "deux mains", 1, true) then
+        if string.find(bas, "épée", 1, true) or string.find(bas, "epee", 1, true) then return "Epées à deux mains" end
+        if string.find(bas, "masse", 1, true) then return "Masses à deux mains" end
+        if string.find(bas, "hache", 1, true) then return "Haches à deux mains" end
+    end
+    for _, e in ipairs(MHH_MOTS_NOM_ARME) do
+        local mot, canon = e[1], e[2]
+        if canon and string.find(bas, mot, 1, true) then return canon end
+    end
+    return nil
+end
+
+local function NormaliserTypeArme(t)
+    if not t then return nil end
+    t = tostring(t)
+    -- minuscules + sans accent brutal (le FR du serveur varie)
+    local bas = string.lower(t)
+    for _, canon in ipairs(MHH_TYPES_ARMES) do
+        local canonBas = string.lower(canon)
+        if bas == canonBas then return canon end
+        -- correspondance partielle (ex. « haches » dans « haches à deux mains »)
+        if string.find(bas, canonBas, 1, true) and #bas <= #canonBas + 2 then
+            return canon
+        end
+    end
+    -- graphies FR alternatives courantes
+    local ALT = {
+        ["épées"] = "Epées", ["epees"] = "Epées", ["épée"] = "Epées",
+        ["épées à deux mains"] = "Epées à deux mains",
+        ["dague"] = "Dagues", ["hache"] = "Haches",
+        ["haches à deux mains"] = "Haches à deux mains",
+        ["masse"] = "Masses", ["bâton"] = "Bâtons", ["baton"] = "Bâtons",
+        ["arc"] = "Arcs", ["baguette"] = "Baguettes",
+        ["armes de pugilat"] = "Armes de pugilat",
+        ["armes d'hast"] = "Armes d'hast",
+        ["armes à feu"] = "Armes à feu", ["arbalète"] = "Arbalètes",
+    }
+    return ALT[bas] or t
+end
+
+-- ================= RUMEURS DE GUILDE (missions cachées) =================
+-- Missions bizarres, cachées, aléatoires : une seule par jour, tirée au
+-- hasard dans celles que le RANG de chasseur débloque (2 = Chasseur →
+-- 5 = Légende). Sous le rang requis, l'onglet Missions ne montre qu'un
+-- murmure verrouillé. Une rumeur ACCEPTÉE reste en cours jusqu'à sa
+-- résolution, même après le tirage du lendemain.
+local function HeureJeu()
+    local heure
+    pcall(function()
+        local a, b = GetGameTime()
+        heure = b and a or math.floor((a or 0) / 60)
+    end)
+    return heure
+end
+
+-- Types d'armes tenues au moment de la prise (mains droite/gauche) —
+-- les rumeurs « à la dague », « à la baguette »… s'y fient.
+local function ArmesDeLaPrise()
+    local t = {}
+    for _, slot in ipairs({ 16, 17 }) do
+        local sc = NormaliserTypeArme(sousClasseDe(GetInventoryItemLink and GetInventoryItemLink("player", slot)))
+            or NormaliserTypeArme(sousClasseDe(GetInventoryItemID and GetInventoryItemID("player", slot)))
+        if sc then t[#t + 1] = sc end
+    end
+    return t
+end
+
+-- RUMEURS & ARMES : certaines rumeurs imposent une arme que la classe
+-- du chasseur ne sait pas porter (un guerrier n'a pas de baguette, un
+-- magicien pas de fusil). Matrice d'armurerie VANILLA (clients FR/EN :
+-- UnitClass renvoie la classe anglaise en 2e valeur) : le tirage du
+-- jour ne propose jamais une rumeur infaisable pour la classe.
+MHH_CLASSES_ARME = {
+    ["Dagues"]            = { WARRIOR=1, HUNTER=1, ROGUE=1, PRIEST=1, MAGE=1, WARLOCK=1, SHAMAN=1, DRUID=1 },
+    ["Baguettes"]         = { PRIEST=1, MAGE=1, WARLOCK=1 },
+    ["Armes à feu"]       = { WARRIOR=1, HUNTER=1, ROGUE=1 },
+    ["Armes de pugilat"]  = { WARRIOR=1, HUNTER=1, ROGUE=1, SHAMAN=1 },
+}
+local function ClassePeutUtiliser(armes)
+    local ok, _, cls = pcall(UnitClass, "player")
+    if not ok or not cls then return true end -- classe illisible : on ne filtre pas
+    for _, arme in ipairs(armes) do
+        local d = MHH_CLASSES_ARME[arme]
+        if d and d[cls] then return true end
+    end
+    return false
+end
+
+MHH_MISSIONS_CACHEES = {
+    { id = "rumeur_cuillere", rang = 2, points = 80,
+      titre = L("La chasse à la cuillère"),
+      citation = L("Un nain, paraît-il, a dépiauté un worg à la cuillère. Toi, tu as une dague : fais honneur à la légende."),
+      objectif = L("Abats n'importe quel gibier du carnet avec une dague."),
+      recompense = L("Le récit du nain, illustré"),
+      icone = "Ability_Rogue_Backstab",
+      armes = { "Dagues" },
+      verifier = function(ctx)
+          for _, a in ipairs(ArmesDeLaPrise()) do if a == "Dagues" then return true end end
+          return false
+      end },
+    { id = "rumeur_minuit", rang = 2, points = 70,
+      titre = L("Le concert de minuit"),
+      citation = L("Les grillons jouent, la guilde ronfle. Toi, tu chasses quand les tavernes ferment — la nuit t'appartient."),
+      objectif = L("Réussis une prise entre minuit et 4h du matin (heure du jeu)."),
+      recompense = L("Bougie de veille du guetteur"),
+      icone = "INV_Misc_PocketWatch_01",
+      verifier = function(ctx)
+          return ctx.heure ~= nil and ctx.heure >= 0 and ctx.heure < 4
+      end },
+    { id = "rumeur_neige", rang = 2, points = 60,
+      titre = L("Le conte de la neige"),
+      citation = L("Il neigeait. Il ne neige plus. Il neigera encore : prends ton gibier avant que la page ne tourne."),
+      objectif = L("Réussis une prise sous la neige."),
+      recompense = L("Flocons pressés dans le carnet"),
+      icone = "Spell_Frost_FrostWard",
+      verifier = function(ctx) return ctx.meteo == "snow" end },
+    { id = "rumeur_baguette", rang = 3, points = 100,
+      titre = L("Le sort en baguette"),
+      citation = L("Un magicien a parié qu'aucun gibier du carnet ne tomberait sous une baguette. La guilde n'aime pas perdre les paris."),
+      objectif = L("Abats un gibier du carnet avec une baguette."),
+      recompense = L("Le pari du magicien, au montant entier"),
+      icone = "INV_Wand_01",
+      armes = { "Baguettes" },
+      verifier = function(ctx)
+          for _, a in ipairs(ArmesDeLaPrise()) do if a == "Baguettes" then return true end end
+          return false
+      end },
+    { id = "rumeur_poudre", rang = 3, points = 120,
+      titre = L("La poudre mouillée"),
+      citation = L("Pluie sur les mèches, gibier dans les fourrés. Un vrai chasseur attend l'éclair pour tirer."),
+      objectif = L("Abats un gibier du carnet avec une arme à feu, sous la pluie."),
+      recompense = L("Poudre tenue au sec, un miracle"),
+      icone = "INV_Weapon_Rifle_01",
+      armes = { "Armes à feu" },
+      verifier = function(ctx)
+          if ctx.meteo ~= "rain" then return false end
+          for _, a in ipairs(ArmesDeLaPrise()) do if a == "Armes à feu" then return true end end
+          return false
+      end },
+    { id = "rumeur_aveugle", rang = 3, points = 110,
+      titre = L("Aveugle et sec"),
+      citation = L("La pluie colle les cils, la bête griffe l'air. Reviens sans une goutte de ton sang sur l'équipement."),
+      objectif = L("Réussis une prise sous la pluie sans perdre un seul point de vie."),
+      recompense = L("Ciré de l'ancien de la guilde"),
+      icone = "Ability_Stealth",
+      verifier = function(ctx) return ctx.meteo == "rain" and ctx.viePerdue == 0 end },
+    { id = "rumeur_pari", rang = 4, points = 150,
+      titre = L("Le pari du fou"),
+      citation = L("Plus haut niveau que toi, heures les plus noires, aucun témoin. La guilde prend les paris — ne perds pas."),
+      objectif = L("Prends un gibier de niveau supérieur au tien, entre minuit et 5h du matin."),
+      recompense = L("Les dés du comptoir, pipés"),
+      icone = "INV_Misc_Dice_01",
+      verifier = function(ctx)
+          return ctx.heure ~= nil and ctx.heure >= 0 and ctx.heure < 5
+              and ctx.niveau ~= nil and ctx.niveauJoueur ~= nil and ctx.niveau > ctx.niveauJoueur
+      end },
+    { id = "rumeur_poings", rang = 4, points = 150,
+      titre = L("Poings contre crocs"),
+      citation = L("On a vu des poings d'arène finir des traques entières. La guilde veut voir ça de ses propres yeux."),
+      objectif = L("Abats un gibier du carnet à mains nues (armes de pugilat)."),
+      recompense = L("Bandages de la main droite"),
+      icone = "INV_Gauntlets_05",
+      armes = { "Armes de pugilat" },
+      verifier = function(ctx)
+          for _, a in ipairs(ArmesDeLaPrise()) do if a == "Armes de pugilat" then return true end end
+          return false
+      end },
+    { id = "rumeur_sommet", rang = 5, points = 250,
+      titre = L("Le duel du sommet"),
+      citation = L("Le dernier murmure de la guilde ne se mérite qu'au sommet du rang : plus grand que toi, et pas une égratignure."),
+      objectif = L("Prends un gibier de niveau supérieur au tien sans perdre un seul point de vie."),
+      recompense = L("Le dernier murmure de la guilde"),
+      icone = "INV_Misc_QuestionMark",
+      verifier = function(ctx)
+          return ctx.niveau ~= nil and ctx.niveauJoueur ~= nil and ctx.niveau > ctx.niveauJoueur
+              and ctx.viePerdue == 0
+      end },
+}
+
+local function MissionCacheeParId(id)
+    if not id then return nil end
+    for _, m in ipairs(MHH_MISSIONS_CACHEES) do
+        if m.id == id then return m end
+    end
+    return nil
+end
+
+-- Tirage du jour : UNE rumeur au hasard parmi celles que le rang
+-- débloque et non accomplies. Re-tirage si la rumeur du jour a été
+-- élucidée (une promotion dans la journée ouvre alors aussitôt une
+-- nouvelle rumeur, au prochain passage de zone / connexion).
+local function TirageMissionCachee()
+    if not DB then return end
+    local aujourdhui = date("%y%m%d")
+    local cur = DB.missionCacheeJour
+    if cur and cur.date == aujourdhui and cur.id and not (DB.missions and DB.missions[cur.id]) then
+        return -- rumeur du jour encore pendante : on la garde
+    end
+    local idxRang = RangGuilde(DB.points)
+    local cand = {}
+    for _, m in ipairs(MHH_MISSIONS_CACHEES) do
+        if m.rang <= idxRang and not (DB.missions and DB.missions[m.id])
+            -- rumeur d'arme : exclue si la classe ne sait pas la porter
+            and (not m.armes or ClassePeutUtiliser(m.armes)) then
+            cand[#cand + 1] = m
+        end
+    end
+    local id = (#cand > 0) and cand[math.random(#cand)].id or nil
+    DB.missionCacheeJour = { date = aujourdhui, id = id }
+    if id and not DB.missionCacheeActive then
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffb97affUne rumeur étrange court dans la guilde…|r Onglet Missions, chasseur — on ne répète pas ce genre de choses."))
+    end
+end
+
+-- Validation : appelée à chaque prise validée avec le contexte de la
+-- chasse (météo, vie perdue, niveau du gibier, heure). La rumeur
+-- ACCEPTÉE seule compte — l'intention du chasseur, pas le hasard.
+local function VerifierMissionsCachees(nom, ctx)
+    if not DB or not DB.missionCacheeActive then return end
+    local m = MissionCacheeParId(DB.missionCacheeActive)
+    if not m then DB.missionCacheeActive = nil return end
+    local ok, valide = pcall(m.verifier, ctx)
+    if not ok or not valide then return end
+    DB.missions = DB.missions or {}
+    DB.missions[m.id] = date("%d/%m/%y")
+    DB.missionCacheeActive = nil
+    DB.points = DB.points + (m.points or 0)
+    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffb97affRumeur élucidée :|r ") .. m.titre .. " ! (+" .. (m.points or 0) .. L(" points)"))
+    ToastSucces("Interface\\Icons\\" .. (m.icone or "INV_Misc_QuestionMark"),
+        L("Rumeur élucidée"), m.titre)
+    if MHH_RaffraichirMissions then MHH_RaffraichirMissions() end
+end
+
+-- Rumeur affichée sur la carte « Rumeur de guilde » : celle du jour,
+-- ou celle acceptée si elle survit au changement de jour.
+function MHH_RumeurDuJour()
+    if not DB then return nil end
+    if DB.missionCacheeActive then return MissionCacheeParId(DB.missionCacheeActive) end
+    local cur = DB.missionCacheeJour
+    if cur and cur.id and cur.date == date("%y%m%d") then
+        return MissionCacheeParId(cur.id)
+    end
+    return nil
+end
+
+FinChasseVictoire = function(nom)
     -- Anti double-validation : la bête ne se prend qu'une fois (le journal
     -- de combat, le ticker chrono et UnitIsDead peuvent tous la signaler)
     if chasseActive ~= nom then return end
@@ -2091,6 +3163,11 @@ local function FinChasseVictoire(nom)
     -- pouvoir déclencher une nouvelle chasse (le compteur de kills
     -- comptait parfois une prise sur deux).
     dernierTrigger[nom] = nil
+    -- PRISE HORODATÉE : pendant 60 s, aucune nouvelle chasse ne peut être
+    -- ouverte sur ce monstre — la victoire vient d'être validée, tout
+    -- redéclenchement (re-ciblage du cadavre, filet « morte sous le
+    -- viseur ») serait un DOUBLE COMPTE (kills +1 fantôme, arme +1).
+    dernierePrise[nom] = time()
     DebugChasse("victoire", nom)
     -- Repérage au kill : là où la bête est tombée = son point de spawn
     -- réel. C'est CETTE position que montrera le clic Carte quand le
@@ -2146,16 +3223,24 @@ local function FinChasseVictoire(nom)
     end
     AfficherBanniere(L("CHASSE RÉUSSIE — MISSION ACCOMPLIE"), 0.4, 1, 0.4)
     if contratRempliAnnonce then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffa0ff50Contrat rempli : " .. nom .. L(" !|r (+") .. (DB.contratPrime or 20) .. L(" points)"))
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffa0ff50Contrat rempli : " .. MHH_NomAffiche(nom) .. L(" !|r (+") .. (DB.contratPrime or 20) .. L(" points)"))
     else
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffa0ff50Chasse réussie : ") .. nom .. " !|r (" .. info.kills .. L(" chasses") .. nomMeteoAnnonce .. ")")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffa0ff50Chasse réussie : ") .. MHH_NomAffiche(nom) .. " !|r (" .. info.kills .. (info.kills == 1 and L(" chasse") or L(" chasses")) .. nomMeteoAnnonce .. ")")
     end
     -- La musique de chasse s'arrête à la prise : sans cet arrêt explicite,
     -- la piste de combat continuait jusqu'au relais suivant quand le kill
     -- était validé PENDANT le combat (UNIT_DIED / viseur) — REGEN_ENABLED
     -- ne la stoppait que si le joueur était déjà sorti du combat.
     MHH_ArreterMusique()
-    if DB.config.son and JouerJingleVictoire then JouerJingleVictoire() end
+    -- Le carillon attend le fondu (1,2 s) + la coupure du canal (0,4 s)
+    -- pour sonner à plein volume — il vit sur le même canal SFX.
+    if DB.config.son and JouerJingleVictoire then
+        if C_Timer and C_Timer.After then
+            C_Timer.After(1.8, function() JouerJingleVictoire() end)
+        else
+            JouerJingleVictoire()
+        end
+    end
     -- Chronomètre : durée et record
     local duree = chasseDebutTemps and (time() - chasseDebutTemps) or nil
     if duree then
@@ -2166,72 +3251,169 @@ local function FinChasseVictoire(nom)
             end
         end
     end
+    -- Conversion « à peu près » en centimètres : la mesure est un rayon
+    -- de hitbox en YARDS (1 yard = 91,44 cm) ; l'envergure estimée
+    -- ≈ 2 rayons. Flaveur de carnet, pas une science exacte.
+    function GabaritEnCm(t)
+        if type(t) ~= "number" then return nil end
+        return math.floor(t * 2 * 91.44 + 0.5)
+    end
     -- Taille du gabarit façon MH : hitbox du client (UnitBoundingRadius,
     -- renvoyée en mètres) + variation aléatoire cohérente (85 %–130 %).
-    -- Couronne d'argent dès 105 %, d'or à 115 % ; record mémorisé.
+    -- Couronnes rares façon MH : argent dès 120 %, d'or à 127 % ; record mémorisé.
     -- Tout sous pcall : les « secret numbers » de Midnight peuvent
     -- interdire l'arithmétique sur cette valeur — l'échec est muet.
     pcall(function()
+        local source = "hitbox"
         local b = UnitBoundingRadius and UnitBoundingRadius("target")
-        if type(b) == "number" and b > 0 then
+        -- Cible déjà libérée à la mort ? Repli sur la mesure prise à
+        -- l'engagement (cible vivante) — le gabarit n'est plus perdu.
+        if type(b) ~= "number" or b <= 0 then b = chasseRayon end
+        -- Midnight : secret number → reconversion AVANT toute
+        -- arithmétique (sinon la multiplication échoue en silence et
+        -- la fiche reste « pas encore mesuré » pour toujours).
+        b = NombreOrdinaire(b)
+        -- DERNIER repli (clients Vanilla 1.12 sans UnitBoundingRadius) :
+        -- estimation depuis le NIVEAU du gibier — bêtes minuscules au
+        -- départ, gros gibier à haut niveau. Mesure de carnet façon MH,
+        -- pas une science exacte : les records et couronnes restent
+        -- comparables entre prises d'un même spécimen.
+        if not b then
+            local niv = NombreOrdinaire(chasseNiveau) or NombreOrdinaire(info.nivMax) or NombreOrdinaire(info.nivMin)
+            -- v0.25 : derniers replis — niveau du JOUEUR puis 30 par
+            -- défaut. Un gabarit estimé vaut mieux qu'aucun gabarit :
+            -- « source: hitbox, rayon: nil » = fiche jamais mesurée.
+            if not niv then niv = NombreOrdinaire(UnitLevel and UnitLevel("player")) end
+            if not niv then niv = 30 end
+            if type(niv) == "number" and niv > 0 then
+                b = 0.30 + math.min(60, niv) * 0.02
+                source = "estimation (niveau " .. tostring(niv) .. ")"
+            end
+        end
+        DebugChasse("gabarit", "source : " .. source .. ", rayon : " .. tostring(b))
+        if b and b > 0 then
+            -- v0.24 : la BASE du spécimen (rayon avant facteur aléatoire)
+            -- est mémorisée — c'est ELLE qui fixe l'échelle de la barre
+            -- de gabarit, pour que la position du curseur corresponde
+            -- au FACTEUR (couronnes comprises) : argent ≈ 78 % de la
+            -- barre, or ≈ 93 %. Avant, la barre était construite sur
+            -- les prises OBSERVÉES (min×0,85 ; record×1,30) : une prise
+            -- couronnée d'argent pouvait s'afficher à 1/4 de la barre.
+            info.rayonBase = b
             local facteur = 0.85 + math.random() * 0.45
             local taille = math.floor(b * facteur * 100 + 0.5) / 100
             info.taille = taille
             if not info.tailleRecord or taille > info.tailleRecord then
                 info.tailleRecord = taille
             end
+            if not info.tailleMin or taille < info.tailleMin then
+                info.tailleMin = taille
+            end
             local couronne
-            if facteur >= 1.15 then couronne = "or"
-            elseif facteur >= 1.05 then couronne = "argent" end
+            if facteur >= 1.27 then couronne = "or"
+            elseif facteur >= 1.20 then couronne = "argent" end
             if couronne then
                 if couronne == "or" or info.couronne ~= "or" then
                     info.couronne = couronne
                 end
             end
             local libelle = L("Gabarit mesuré : |cffffff00") .. taille .. L(" unités|r")
+                .. L(" |cffa58b54(~") .. (GabaritEnCm and GabaritEnCm(taille) or "?")
+                .. L(" cm d'envergure)|r")
             if couronne == "or" then
                 ToastSucces("Interface\\Icons\\INV_Misc_MonsterClaw_04",
                     L("Mesure du gabarit"), libelle .. L(" — |cffffcc44COURONNE D'OR !|r"))
             elseif couronne == "argent" then
-                ToastSucces("Interface\\Icons\\INV_Misc_MonsterClaw_04",
-                    L("Mesure du gabarit"), libelle .. L(" — |cffc0c0c0couronne d'argent|r"))
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. libelle .. L(" — |cffc0c0c0couronne d'argent|r"))
             else
                 DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. libelle)
             end
         end
     end)
-    -- Arme du coup : l'arme tenue en main principale au moment de la prise
-    -- alimente l'histogramme de la carte de guilde (armes les plus
-    -- utilisées). Triple source : lien d'objet, identifiant, puis nom —
-    -- sur ce client le cache d'objet peut manquer pour l'une mais pas
-    -- l'autre. Échec = trace /hunt debug (plus jamais muet).
+    -- Armes de la prise : les DEUX mains sont comptées (ambidextrie —
+    -- un voleur aux deux dagues crédite chaque arme du kill). Triple
+    -- source par arme : lien/id (souvent muets sur ce client), scan du
+    -- tooltip, puis le NOM — la seule source fiable ici. Échec = message
+    -- chat avec le nom lu (plus jamais muet) ; un bouclier en main
+    -- gauche n'est PAS signalé (ce n'est pas une arme).
     do
-        local sousClasseArme = nil
-        pcall(function()
-            -- Lien d'abord, id en repli — sousClasseDe corrige l'indice
-            -- (8e valeur ; via pcall la capture n = valeur n-1).
-            sousClasseArme = sousClasseDe(GetInventoryItemLink and GetInventoryItemLink("player", 16))
-                or sousClasseDe(GetInventoryItemID and GetInventoryItemID("player", 16))
-            -- Source 2 : le TOOLTIP de l'objet en main droite. Sur ce
-            -- client le cache d'objet renvoyé par GetItemInfo est souvent
-            -- VIDE (nil sur lien ET id), alors que le tooltip, lui, rend
-            -- toujours les lignes réelles. La 2e ligne du tooltip est la
-            -- sous-classe (« Haches », « Épées »… en client FR) — c'est
-            -- la valeur exacte que l'histogramme veut compter.
+        for _, slot in ipairs({ 16, 17 }) do -- main droite, main gauche
+            local sousClasseArme = nil
+            local mainsArme = nil -- v0.36 : 1 ou 2, lu sur la ligne « mains » du tooltip
+            pcall(function()
+                sousClasseArme = NormaliserTypeArme(sousClasseDe(GetInventoryItemLink and GetInventoryItemLink("player", slot)))
+                    or NormaliserTypeArme(sousClasseDe(GetInventoryItemID and GetInventoryItemID("player", slot)))
+            end)
             if not sousClasseArme and GameTooltip then
-                GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-                GameTooltip:ClearLines()
-                GameTooltip:SetInventoryItem("player", 16)
-                local libelle = GameTooltipTextLeft2 and GameTooltipTextLeft2:GetText()
-                GameTooltip:Hide()
-                if libelle and libelle ~= "" then sousClasseArme = libelle end
+                pcall(function()
+                    -- Scan de TOUTES les lignes du tooltip : la ligne du
+                    -- type (« Haches », « Dagues »…) n'est pas toujours la
+                    -- 2e ; « Niveau d'objet » n'est PAS un type.
+                    GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+                    if GameTooltip.ClearLines then GameTooltip:ClearLines() end
+                    GameTooltip:SetInventoryItem("player", slot)
+                    local nbLig = GameTooltip:NumLines() or 0
+                    local nomObjet = nil -- ligne 1 = nom de l'arme
+                    for lig = 1, math.min(nbLig, 8) do
+                        local fs = _G["GameTooltipTextLeft" .. lig]
+                        local okTxt, txt = pcall(function() return fs and fs.GetText and fs:GetText() end)
+                        if okTxt and txt and txt ~= "" then
+                            if lig == 1 then nomObjet = txt end
+                            -- v0.36 : la ligne « deux mains »/« une main »
+                            -- du tooltip dit le port DUO ou SOLO — le nom
+                            -- seul ne le dit pas (« Fendoir… » 1M ou 2M ?)
+                            local basTxt = string.lower(txt)
+                            if string.find(basTxt, "deux mains", 1, true) then mainsArme = 2 end
+                            if string.find(basTxt, "une main", 1, true) then mainsArme = 1 end
+                            if not string.find(string.lower(txt), "niveau d", 1, true) then
+                                local norm = NormaliserTypeArme(txt)
+                                for _, canon in ipairs(MHH_TYPES_ARMES) do
+                                    if norm == canon then sousClasseArme = canon break end
+                                end
+                                if sousClasseArme then break end
+                            end
+                        end
+                    end
+                    if GameTooltip.Hide then GameTooltip:Hide() end
+                    -- SOURCE 4 : le nom (sur ce client, AUCUNE ligne de
+                    -- sous-classe — le nom est le seul indice)
+                    if not sousClasseArme then
+                        sousClasseArme = NomVersTypeArme(nomObjet)
+                    end
+                end)
             end
-        end)
-        DB.armes = DB.armes or {}
-        if sousClasseArme then
-            DB.armes[sousClasseArme] = (DB.armes[sousClasseArme] or 0) + 1
-        else
-            DebugChasse("armes", L("arme non identifiée à la prise (essais GetItemInfo vides)"))
+            -- Repli hors tooltip : nom extrait du lien (« [Dague...] »)
+            if not sousClasseArme then
+                pcall(function()
+                    local lien = GetInventoryItemLink and GetInventoryItemLink("player", slot)
+                    local nom = lien and string.match(lien, "%[(.-)%]")
+                    sousClasseArme = NomVersTypeArme(nom)
+                end)
+            end
+            -- v0.36 : le tooltip dit « deux mains » ? on bascule la
+            -- famille sur sa variante 2M (une hache à deux mains n'est
+            -- pas une hache à une main pour le carnet)
+            if sousClasseArme and mainsArme == 2 and MHH_VARIANTES_2M[sousClasseArme] then
+                sousClasseArme = MHH_VARIANTES_2M[sousClasseArme]
+            end
+            DB.armes = DB.armes or {}
+            if sousClasseArme then
+                DB.armes[sousClasseArme] = (DB.armes[sousClasseArme] or 0) + 1
+            else
+                -- Non reconnue ET ce n'est pas un bouclier : signaler le
+                -- nom pour l'ajouter au dictionnaire
+                local nomVu, bouclier = nil, false
+                pcall(function()
+                    local lien = GetInventoryItemLink and GetInventoryItemLink("player", slot)
+                    nomVu = lien and string.match(lien, "%[(.-)%]") or nil
+                    bouclier = nomVu and string.find(string.lower(nomVu), "bouclier", 1, true) ~= nil
+                end)
+                if nomVu and not bouclier then
+                    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffa58b54Arme non identifiée à la prise : |r")
+                        .. nomVu .. L(" |cffa58b54(à signaler pour l'ajouter au comptage)|r"))
+                    DebugChasse("armes", L("arme non identifiée à la prise (essais GetItemInfo vides)"))
+                end
+            end
         end
     end
     -- Points de chasse : rare x3, bonus sans mourir, bonus de niveau
@@ -2267,26 +3449,86 @@ local function FinChasseVictoire(nom)
     local zone = MHH_CATALOGUE[nom] or GetZoneText()
     DB.zonesChassees[zone] = true
     DB.serie = DB.serie + 1
-    -- Trophée façon MH (carving) : une pièce prélevée sur la dépouille
+    -- Trophée façon MH (carving) : une pièce prélevée sur la dépouille —
+    -- choisie par la FAMILLE de la bête (mêmes mots-clés que les icônes du
+    -- carnet) et non plus par rotation de kills : un GORILLE ne lâche plus
+    -- une plume (bug « Toison d'or »). Sans famille reconnue (humanoïdes,
+    -- élémentaires…), rotation discrète pour garder la variété.
     local PIECES = {
-        { nom = "croc",      article = "un"  },
-        { nom = "plume",     article = "une" },
-        { nom = "écaille",   article = "une" },
-        { nom = "carapace",  article = "une" },
-        { nom = "patte",     article = "une" },
+        croc     = { nom = "croc",     article = "un"  },
+        plume    = { nom = "plume",    article = "une" },
+        ecaille  = { nom = "écaille",  article = "une" },
+        carapace = { nom = "carapace", article = "une" },
+        patte    = { nom = "patte",    article = "une" },
+        fourrure = { nom = "fourrure", article = "une" },
     }
-    local piece = PIECES[((info.kills or 1) - 1) % #PIECES + 1]
+    local PIECES_FAMILLE = {
+        { mots = { "plume", "hibou", "chouette", "serres", "aile", "hurle", "vol", "planeur", "échassier" }, piece = "plume" },
+        { mots = { "tortue", "scorp", "silith", "crabe", "croquesable", "carapace" }, piece = "carapace" },
+        { mots = { "araign", "veuve", "tisse" }, piece = "patte" },
+        { mots = { "singe", "makr", "gorille", "ours", "urson", "toison" }, piece = "fourrure" },
+        { mots = { "crocolisque", "croco", "serpent", "vipère", "boahn", "wyrm", "dragon" }, piece = "ecaille" },
+    }
+    local clePiece = string.lower(nom or "")
+    local pieceDefaut
+    for _, regle in ipairs(PIECES_FAMILLE) do
+        for _, mot in ipairs(regle.mots) do
+            if string.find(clePiece, mot, 1, true) then pieceDefaut = PIECES[regle.piece] break end
+        end
+        if pieceDefaut then break end
+    end
+    local rotation = { PIECES.croc, PIECES.plume, PIECES.ecaille, PIECES.patte }
+    -- Carving façon MH : la dépouille offre un certain nombre de
+    -- prélèvements (1 pour la bête commune, 2-3 pour un RARE), et
+    -- chaque carve peut RATER (pièce abîmée, 15%). Le contenu est
+    -- aléatoire par famille, la réussite n'est pas garantie.
+    local nbCarves = chasseRare and (math.random(100) <= 50 and 3 or 2) or 1
     DB.trophees = DB.trophees or {}
-    DB.trophees[piece.nom] = (DB.trophees[piece.nom] or 0) + 1
-    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Trophée prélevé : ") .. piece.article .. " " .. piece.nom .. ".")
+    -- Anti-spam : une SEULE ligne de chat pour toute la dépouille —
+    -- les trophées réussis groupés, les découpes manquées en rappel
+    -- discret entre parenthèses. Plus de salve de messages par carve.
+    local piecesOK, manques = {}, 0
+    for i = 1, nbCarves do
+        local piece = pieceDefaut or rotation[((info.kills or 1) + i - 2) % #rotation + 1]
+        if math.random(100) <= 15 then
+            manques = manques + 1
+        else
+            DB.trophees[piece.nom] = (DB.trophees[piece.nom] or 0) + 1
+            piecesOK[#piecesOK + 1] = piece.article .. " " .. piece.nom
+        end
+    end
+    do
+        local extraits = {}
+        if #piecesOK > 0 then
+            extraits[#extraits + 1] = (#piecesOK == 1 and L("Trophée prélevé : ") or L("Trophées prélevés : "))
+                .. table.concat(piecesOK, ", ") .. "."
+        end
+        if manques > 0 then
+            extraits[#extraits + 1] = "|cff888888" .. manques
+                .. (manques == 1 and L(" découpe manquée (le morceau s'est abîmé).") or L(" découpes manquées (les morceaux se sont abîmés).")) .. "|r"
+        end
+        if #extraits > 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. table.concat(extraits, " "))
+        end
+    end
     -- Cuisine : récolte sur la dépouille (viande 40%, miel 10% sur rare)
+    -- v0.121 : CAPACITÉ DU SAC — à saturation la récolte se perd : il
+    -- faut cuisiner (le mini-sac affiche N/max, gris au plafond)
     if math.random(100) <= 40 then
-        DB.viande = (DB.viande or 0) + 1
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Récolte : |cffff7a1a1 viande de gibier|r."))
+        if (DB.viande or 0) >= (CUISINE_INGREDIENTS.viande.max or 20) then
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Sac de viande plein — la prise se perd (cuisine !)."))
+        else
+            DB.viande = (DB.viande or 0) + 1
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Récolte : |cffff7a1a1 viande de gibier|r."))
+        end
     end
     if chasseRare and math.random(100) <= 10 then
-        DB.miel = (DB.miel or 0) + 1
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Récolte : |cffff7a1a1 miel sauvage|r !"))
+        if (DB.miel or 0) >= (CUISINE_INGREDIENTS.miel.max or 10) then
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Pot de miel plein — la prise se perd (cuisine !)."))
+        else
+            DB.miel = (DB.miel or 0) + 1
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Récolte : |cffff7a1a1 miel sauvage|r !"))
+        end
     end
     -- Succès « Imbattable » : ≤ 25% de vie perdue. Impossible à calculer
     -- avec des « secret numbers » (division interdite) : on le débloque
@@ -2317,21 +3559,54 @@ local function FinChasseVictoire(nom)
     if nom == "Rotheap" then DebloquerSucces("rotheap") end
     -- Chasse au piège : monstre tué alors qu'il était pris dans un piège
     if chassePiegee then DebloquerSucces("piege") end
-    -- Capture façon MH : la bête prise au piège rejoint la ménagerie
-    -- (seuls les spécimens pixel art de l'enclos sont capturables)
-    if chassePiegee and MHH_SPECIMENS[nom] then
+    -- Capture SIMPLIFIÉE (v0.64, pour la sortie) : tout spécimen
+    -- de l'enclos tué pendant une chasse est capturé — plus de
+    -- condition piège/CC (fragile, et excluait la plupart des
+    -- classes). La détection d'aura reste pour le succès chasseur.
+    -- v0.121 : RÉSOLUTION DE GRAPHIES — le nom vu en jeu peut différer
+    -- de la clé du spécimen (« Snort la Moqueuse » vs « Snort le
+    -- Moqueur ») : on capture sous la clé CANONIQUE, jamais sous la
+    -- graphie du serveur (enclos, sprites et fiche restent alignés).
+    local cleSpec = (MHH_SpecimenDe and MHH_SpecimenDe(nom)) or (MHH_SPECIMENS[nom] and nom)
+    if cleSpec then
         DB.menagerie = DB.menagerie or {}
-        local m = DB.menagerie[nom]
-        if not m then
-            DB.menagerie[nom] = { capture = time(), nourri = time() }
+        local m = DB.menagerie[cleSpec]
+        -- v0.119h : LIMITE PAR ENCLOS — le régisseur refuse la bête
+        -- de trop : il faut d'abord en relâcher une (fiche pensionnaire,
+        -- bouton Relâcher).
+        local enclosPlein = false
+        if not m and MHH_CAPACITE_ENCLOS and MHH_ENCLOS_DU_SPECIMEN then
+            local cleEnc = MHH_ENCLOS_DU_SPECIMEN[cleSpec]
+            local cap = (cleEnc and MHH_CAPACITE_ENCLOS[cleEnc]) or 0
+            if cap > 0 then
+                local nbEnc = 0
+                for nomE in pairs(DB.menagerie) do
+                    if MHH_ENCLOS_DU_SPECIMEN[nomE] == cleEnc then
+                        nbEnc = nbEnc + 1
+                    end
+                end
+                if nbEnc >= cap then
+                    enclosPlein = true
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r L'enclos ("
+                        .. (cleEnc or "?") .. ") est plein (" .. nbEnc .. "/"
+                        .. cap .. ") — rel\195\162che un pensionnaire avant d'en capturer un autre.")
+                end
+            end
+        end
+        if not m and not enclosPlein then
+            DB.menagerie[cleSpec] = { capture = time(), nourri = time() }
             -- Grande annonce dorée : la capture est un moment MH, pas un
             -- simple message discret. Bandeau + toast deux lignes.
             AfficherBanniere(L("SPÉCIMEN CAPTURÉ !"), 0.95, 0.78, 0.25)
             ToastSucces("Interface\\Icons\\Ability_Hunter_BeastTaming",
-                L("Spécimen capturé"), nom .. L(" rejoint l'enclos (Ménagerie)."))
+                L("Spécimen capturé"), MHH_NomAffiche(cleSpec) .. L(" rejoint l'enclos (Ménagerie)."))
             DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff7a1aSpécimen captéré !|r ")
-                .. nom .. L(" est transféré dans l'enclos (onglet Ménagerie)."))
-        else
+                .. MHH_NomAffiche(cleSpec) .. L(" est transféré dans l'enclos (onglet Ménagerie)."))
+            -- v0.119 : succès ÉLEVEUR — 5 pensionnaires en enclos
+            local nbPensionnaires = 0
+            for _ in pairs(DB.menagerie) do nbPensionnaires = nbPensionnaires + 1 end
+            if nbPensionnaires >= 5 then DebloquerSucces("eleveur") end
+        elseif m then
             -- déjà capturé : le retour au bercail le remet d'aplomb
             m.nourri = time()
         end
@@ -2342,6 +3617,15 @@ local function FinChasseVictoire(nom)
     if cleMeteoPrise == "rain" then DebloquerSucces("pluie") end
     if cleMeteoPrise == "firestorm" then DebloquerSucces("feu") end
     if cleMeteoPrise == "snow" then DebloquerSucces("neige") end
+    -- Rumeurs de guilde (missions cachées) : condition bizarre vérifiée
+    -- à la prise — dague, minuit, neige, pugilat… selon la rumeur active
+    VerifierMissionsCachees(nom, {
+        viePerdue = viePerdue,
+        meteo = cleMeteoPrise,
+        niveau = chasseNiveau,
+        niveauJoueur = (UnitLevel and UnitLevel("player") or nil),
+        heure = HeureJeu(),
+    })
     local h, fm, tk = (DB.chasses["Humar le Seigneur hautain"] or DB.chasses["Humar le Fier"]),
         (DB.chasses["Flinkmähne"] or DB.chasses["Vif-Crinière"]
             or DB.chasses["Vif-crins"] or DB.chasses["Vif-Crins"]),
@@ -2369,7 +3653,9 @@ local function FinChasseVictoire(nom)
     if nouvelIdx > (DB.rangActuel or 1) then
         DB.rangActuel = nouvelIdx
         DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Nouveau rang de chasseur : |cffffff00") .. nomRang .. "|r ! (+" .. pts .. L(" points)"))
-        ToastSucces("Interface\\Common\\ReputationStar", L("Promotion de guilde"), L("Nouveau rang : ") .. nomRang)
+        -- Promotion : affichee comme un succes — parchemin custom, la
+        -- desc « Nouveau rang : X » est une phrase (retour utilisateur)
+        ToastSucces("Interface\\Common\\ReputationStar", L("Promotion de guilde"), L("Nouveau rang : ") .. nomRang, nil, "succes")
         -- Sommet atteint : la Blackrock orchestrée remplace la fanfare —
         -- elle ne jouera qu'ici, à ce moment précis. Une seule fois.
         if MHH_RANGS and nouvelIdx == #MHH_RANGS then
@@ -2380,20 +3666,63 @@ local function FinChasseVictoire(nom)
     end
 end
 
-local function FinChasseEchec()
+-- v0.35 : mise à genou du chasseur quand le gibier est perdu (fuite,
+-- trace perdue, échec) — théâtral façon MH, mais SANS perdre la chasse :
+-- la fuite reste une suspension reprise au re-ciblage, le contrat
+-- continue. DoEmote peut être protégé sur ce client : pcall, et si
+-- l'émote échoue on tente « faint » en repli (l'ancien comportement).
+local function EmoteDeuilChasseur()
+    if not (DB and DB.config and DB.config.emotePerdu ~= false) then return end
+    if not pcall(DoEmote, "KNEEL") then pcall(DoEmote, "faint") end
+end
+
+local function FinChasseEchec(mort)
     -- Échec aussi si la chasse venait d'être suspendue (mort du chasseur :
     -- la cible se perd AVANT que PLAYER_DEAD n'arrive — sinon la suspension
     -- survivait à la mort et se « reprenait » au cimetière)
     if not chasseActive and not chasseSuspendue then return end
     local nom = chasseActive or (chasseSuspendue and chasseSuspendue.nom) or "?"
     DebugChasse("echec", nom)
-    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff5050Chasse échouée : ") .. nom .. "|r")
-    AfficherBanniere(L("CHASSE ÉCHOUÉE"), 1, 0.3, 0.3)
+    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff5050Chasse échouée : ") .. MHH_NomAffiche(nom) .. "|r")
+    -- Chasseur mort : PAS de bannière — elle apparaissait PAR-DESSUS
+    -- l'encart de libération d'esprit du client (message chat suffit).
+    -- NB : le flag UnitIsDeadOrGhost n'est PAS encore levé quand
+    -- PLAYER_DEAD/REGEN arrivent sur ce client — les appelants
+    -- contextes-mort passent donc « mort » explicitement.
+    local okMortCh, mortCh = pcall(function()
+        return UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")
+    end)
+    if not (mort or (okMortCh and mortCh)) then
+        AfficherBanniere(L("CHASSE ÉCHOUÉE"), 1, 0.3, 0.3)
+    end
     -- Le chasseur s'écroule, façon MH quand le monstre s'échappe :
     -- emote de perte de connaissance si le client la connaît, sinon rien
-    if not pcall(DoEmote, "faint") then pcall(DoEmote, "flop") end
-    if DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED or 845) end
+    EmoteDeuilChasseur() -- v0.35 : à genou (KNEEL), repli faint
+    -- Son d'échec différé : il vit sur le canal SFX, comme la piste de
+    -- chasse — on attend la fin du fondu (1,2 s) + la coupure (0,4 s)
+    -- pour qu'il sonne à plein volume. Fichier 620 : le SoundKit 845
+    -- est muet sur ce client.
+    if DB.config.son and JouerJingleEchec then
+        if C_Timer and C_Timer.After then
+            C_Timer.After(1.8, function() JouerJingleEchec() end)
+        else
+            JouerJingleEchec()
+        end
+    elseif DB.config.son then
+        JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED or 845)
+    end
     MHH_ArreterMusique() -- stoppe la musique et rend le décor sonore au jeu
+    -- Mort du chasseur : on dégage l'écran — l'annonce de région (grand
+    -- encart sombre en haut, visible ~5,5 s après un changement de zone)
+    -- et la bannière ne doivent PAS traîner derrière la fenêtre de
+    -- libération d'esprit du client.
+    if mort then
+        if annonceZoneFrame then
+            annonceZoneFrame:SetAlpha(0)
+            annonceZoneFrame:Hide()
+        end
+        banniere:Hide()
+    end
     chasseActive = nil
     chasseVieTouchee = false
     chasseSuspendue = nil -- échec : plus de reprise possible
@@ -2405,7 +3734,8 @@ end
 -- sont mémorisés — re-cibler la bête la REPREND. NB : n'annule la chasse
 -- active QUE si c'est encore elle (une autre peut avoir démarré).
 local function SuspendreChasse(nom, etat)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffa58b54La trace de " .. nom .. L(" se perd…|r Chasse suspendue — re-ciblez-la pour reprendre."))
+    AnnoncerSuspension(nom, "|cffffd100[MH Hunt]|r |cffa58b54La trace de " .. nom .. L(" se perd…|r Chasse suspendue — re-ciblez-la pour reprendre."))
+    EmoteDeuilChasseur() -- v0.35 : le chasseur tombe à genou
     chasseSuspendue = {
         nom = nom,
         debutTemps = etat.debutTemps,
@@ -2502,11 +3832,12 @@ end
 -- (se dilate et s'estompe, en rythme avec le son MAP_PING). Rien de tout
 -- cela n'est garanti selon le client : chaque accès est sous pcall, et
 -- un échec s'explique dans /hunt debug au lieu d'être invisible.
-local cercleCarte, cercleTicker, MHH_timerCercle
+-- GLOBALES préfixées MHH_ : limite des 200 locales du chunk principal
+-- (LUA_WARNING v0.62) — même sémantique, portée globale préfixée
 local function CacherCercleCarte()
     if MHH_timerCercle then MHH_timerCercle:Cancel() MHH_timerCercle = nil end
-    if cercleTicker then cercleTicker:Cancel() cercleTicker = nil end
-    if cercleCarte then cercleCarte:Hide() end
+    if MHH_cercleTicker then MHH_cercleTicker:Cancel() MHH_cercleTicker = nil end
+    if MHH_cercleCarte then MHH_cercleCarte:Hide() end
 end
 local function PlacerCercleCarte(x, y)
     local okCercle, errCercle = pcall(function()
@@ -2524,53 +3855,72 @@ local function PlacerCercleCarte(x, y)
             DebugChasse("carte", "cercle : canevas introuvable (ni ScrollContainer, ni WorldMapButton)")
             return
         end
-        if not cercleCarte then
-            cercleCarte = CreateFrame("Frame", nil, canvas)
-            cercleCarte:SetSize(96, 96)
+        if not MHH_cercleCarte then
+            MHH_cercleCarte = CreateFrame("Frame", nil, canvas)
+            MHH_cercleCarte:SetSize(96, 96)
             -- AU-DESSUS de l'art de la carte : sans strate haute, le disque
             -- reste DERRIÈRE la texture de la carte — invisible. C'est le
             -- probable coupable du ping jamais vu (le son jouait, le
             -- cercle se cachait derrière la peinture).
-            pcall(function() cercleCarte:SetFrameStrata("HIGH") end)
-            pcall(function() cercleCarte:SetFrameLevel(20) end)
+            pcall(function() MHH_cercleCarte:SetFrameStrata("HIGH") end)
+            pcall(function() MHH_cercleCarte:SetFrameLevel(20) end)
             -- Zone ronde lisible sur tous les clients : un disque
             -- translucide + un anneau de points dessinés en textures
             -- (le MiniMap-TrackingBorder seul peut ne pas s'afficher)
-            local fond = cercleCarte:CreateTexture(nil, "BACKGROUND")
+            local fond = MHH_cercleCarte:CreateTexture(nil, "BACKGROUND")
             fond:SetAllPoints()
             fond:SetColorTexture(1, 0.82, 0.25, 0.13)
             for i = 0, 23 do
                 local a = i * math.pi / 12
-                local pt = cercleCarte:CreateTexture(nil, "OVERLAY")
+                local pt = MHH_cercleCarte:CreateTexture(nil, "OVERLAY")
                 pt:SetSize(6, 6)
                 pt:SetPoint("CENTER", math.cos(a) * 42, math.sin(a) * 42)
                 pt:SetColorTexture(1, 0.75, 0.15, 0.95)
             end
-            local t = cercleCarte:CreateTexture(nil, "OVERLAY")
+            local t = MHH_cercleCarte:CreateTexture(nil, "OVERLAY")
             t:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
             t:SetAllPoints()
-            cercleCarte.texture = t
+            MHH_cercleCarte.texture = t
             -- le cercle disparaît avec la carte
             WorldMapFrame:HookScript("OnHide", CacherCercleCarte)
         end
         -- position en fraction de la carte (0-1) → pixels du canevas
-        cercleCarte:ClearAllPoints()
-        cercleCarte:SetPoint("CENTER", canvas, "TOPLEFT",
-            x * canvas:GetWidth(), y * canvas:GetHeight())
-        cercleCarte:SetAlpha(1)
-        cercleCarte:SetScale(1)
-        cercleCarte:Show()
+        MHH_cercleCarte.fracX, MHH_cercleCarte.fracY = x, y
+        local function RepositionnerCercle()
+            if not MHH_cercleCarte or not MHH_cercleCarte:IsShown() then return end
+            local c = canvas
+            if not c or not c.GetWidth or c:GetWidth() <= 0 then return end
+            MHH_cercleCarte:ClearAllPoints()
+            MHH_cercleCarte:SetPoint("CENTER", c, "TOPLEFT",
+                (MHH_cercleCarte.fracX or 0) * c:GetWidth(), (MHH_cercleCarte.fracY or 0) * c:GetHeight())
+        end
+        RepositionnerCercle()
+        -- v0.58 : DIAGNOSTIC — identifier le canevas utilisé (nom + taille)
+        -- et la position pixel visée : si le ping retombe sur le joueur,
+        -- on saura si le canevas est l'art complet ou un sous-élément.
+        DebugChasse("carte", "cercle : canevas=" .. tostring(canvas.GetName and canvas:GetName() or "?")
+            .. " taille=" .. math.floor(canvas:GetWidth() + 0.5) .. "x" .. math.floor(canvas:GetHeight() + 0.5)
+            .. " fraction=(" .. string.format("%.2f", x) .. "," .. string.format("%.2f", y) .. ")")
+        MHH_cercleCarte:SetAlpha(1)
+        MHH_cercleCarte:SetScale(1)
+        MHH_cercleCarte:Show()
         -- Animation « ping sonar » : l'anneau se DILATE depuis le point
         -- tout en s'estompant, puis repart — le mouvement qu'on attend
         -- d'un ping, maintenant qu'on l'entend aussi (cycle d'une seconde).
-        if cercleTicker then cercleTicker:Cancel() end
+        -- v0.58 : toutes les 0,2 s le cercle se RE-PLACE depuis ses
+        -- fractions : si le canevas change de taille ou que la carte
+        -- finit de se charger en retard, la position se corrige seule.
+        if MHH_cercleTicker then MHH_cercleTicker:Cancel() end
         local phase = 0
-        cercleTicker = C_Timer.NewTicker(0.04, function()
-            if not cercleCarte or not cercleCarte:IsShown() then return end
+        local tick = 0
+        MHH_cercleTicker = C_Timer.NewTicker(0.04, function()
+            if not MHH_cercleCarte or not MHH_cercleCarte:IsShown() then return end
+            tick = tick + 1
+            if tick % 5 == 0 then RepositionnerCercle() end
             phase = phase + 0.025
             if phase >= 1 then phase = 0 end
-            cercleCarte:SetScale(1 + phase * 0.5) -- se dilate : 1 -> 1,5
-            cercleCarte:SetAlpha(1 - phase * 0.7)  -- s'estompe : 1 -> 0,3
+            MHH_cercleCarte:SetScale(1 + phase * 0.5) -- se dilate : 1 -> 1,5
+            MHH_cercleCarte:SetAlpha(1 - phase * 0.7)  -- s'estompe : 1 -> 0,3
         end)
     end)
     if not okCercle and errCercle then
@@ -2582,7 +3932,7 @@ local function VoirSurCarte(zone, nom)
     if not zone or zone == "?" then return end
     local idCarte = TrouverCarteZone(zone)
     if not idCarte then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Carte introuvable pour « " .. zone .. L(" » (nom de zone inconnu du client ?)."))
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Carte introuvable pour « " .. zone .. L(" »."))
         return
     end
     if WorldMapFrame and WorldMapFrame.SetMapID then
@@ -2611,10 +3961,45 @@ local function VoirSurCarte(zone, nom)
                     .. " x=" .. string.format("%.2f", point.x) .. " y=" .. string.format("%.2f", point.y))
                 if C_Map and C_Map.SetUserWaypoint then
                     if C_Map.ClearUserWaypoint then C_Map.ClearUserWaypoint() end
-                    C_Map.SetUserWaypoint({ uiMapID = idCarte, position = { x = point.x, y = point.y } })
-                    if C_SuperTrack and C_SuperTrack.AddSuperTrackedUserWaypoint then
-                        pcall(C_SuperTrack.AddSuperTrackedUserWaypoint)
+                    -- v0.57 : la flèche de minimap tombait sur le JOUEUR
+                    -- quand le waypoint vit sur la carte du GIBIER et que
+                    -- le chasseur est dans une AUTRE zone : le supertrack
+                    -- du client ne traduit pas une position entre cartes.
+                    -- On traduit donc les coordonnées vers la carte
+                    -- courante du joueur (position monde au milieu) quand
+                    -- les API existent — sinon comportement inchangé.
+                    local wId, wx, wy = idCarte, point.x, point.y
+                    local traduit = false
+                    pcall(function()
+                        if not C_Map.GetBestMapForUnit then return end
+                        local carteActuelle = C_Map.GetBestMapForUnit("player")
+                        if carteActuelle and carteActuelle ~= idCarte
+                            and C_Map.GetWorldPosFromMapCoords
+                            and C_Map.GetMapCoordsFromWorldPos then
+                            local wposX, wposY, contId = C_Map.GetWorldPosFromMapCoords(idCarte, point.x, point.y)
+                            if wposX then
+                                local cx, cy = C_Map.GetMapCoordsFromWorldPos(contId, wposX, wposY, carteActuelle)
+                                if cx and cy and cx >= 0 and cx <= 1 and cy >= 0 and cy <= 1 then
+                                    wId, wx, wy = carteActuelle, cx, cy
+                                    traduit = true
+                                end
+                            end
+                        end
+                    end)
+                    if not traduit and DB.config.debug then
+                        DebugChasse("carte", "traduction inter-carte indisponible : flèche minimap possiblement sur le joueur")
                     end
+                    C_Map.SetUserWaypoint({ uiMapID = wId, position = { x = wx, y = wy } })
+                    -- v0.61 : AddSuperTrackedUserWaypoint RETIRÉ — le debug
+                    -- (v0.60) a montré des données JUSTES (waypoint relu au
+                    -- bon endroit, carte correcte) mais le marqueur du
+                    -- client se dessinait SUR LE JOUEUR : son rendu est
+                    -- buggé sur ce client rétro-porté, rien à corriger de
+                    -- notre côté. Le repère visuel est notre cercle sonar
+                    -- (juste, lui) + le pin du waypoint (minimap).
+                    -- Pour le réactiver un jour : pcall(function()
+                    --   if C_SuperTrack and C_SuperTrack.AddSuperTrackedUserWaypoint then
+                    --     C_SuperTrack.AddSuperTrackedUserWaypoint() end end)
                 end
                 -- Cercle placé une frame plus tard : juste après SetMapID le
                 -- canvas n'a pas toujours encore ses nouvelles dimensions —
@@ -2623,6 +4008,32 @@ local function VoirSurCarte(zone, nom)
                 local px, py = point.x, point.y
                 MHH_timerCercle = C_Timer.After(0.05, function()
                     PlacerCercleCarte(px, py)
+                end)
+                -- v0.58 : DIAGNOSTIC en différé — quelle carte est RÉELLEMENT
+                -- affichée après le clic, et qu'a retenu le client du
+                -- waypoint ? (le joueur voit le ping au mauvais endroit :
+                -- ces lignes départagent carte-non-changée vs canevas
+                -- trompeur vs waypoint ignoré)
+                C_Timer.After(0.2, function()
+                    pcall(function()
+                        if WorldMapFrame and WorldMapFrame.GetMapID then
+                            DebugChasse("carte", "affichée=" .. tostring(WorldMapFrame:GetMapID())
+                                .. " attendue=" .. tostring(idCarte))
+                        end
+                    end)
+                    pcall(function()
+                        if C_Map and C_Map.GetUserWaypoint then
+                            local wp = C_Map.GetUserWaypoint()
+                            if wp then
+                                local wx = wp.position and (wp.position.x or (wp.position.GetXY and select(1, wp.position:GetXY())) or "?")
+                                local wy = wp.position and (wp.position.y or (wp.position.GetXY and select(2, wp.position:GetXY())) or "?")
+                                DebugChasse("carte", "waypoint lu: map=" .. tostring(wp.uiMapID)
+                                    .. " pos=" .. tostring(wx) .. "," .. tostring(wy))
+                            else
+                                DebugChasse("carte", "waypoint lu: NIL (SetUserWaypoint ignoré par ce client ?)")
+                            end
+                        end
+                    end)
                 end)
                 -- Ping sonore du client : le point se repère à l'oreille
                 -- sans chercher le marqueur des yeux (MAP_PING ~ 5274)
@@ -2676,7 +4087,6 @@ MHH_PISTES_COMBAT_EPIQUE = {
     { id = 3850493, d = 110 }, -- suite de la précédente
     { id = 1064170, d = 153 }, -- épique Warsong/Highmaul
     { id = 2143525, d = 80 },  -- épique horde
-    { id = 4423094, d = 119 }, -- Celestial battle
     { id = 1067075 },          -- gros mob méchant (suit en 1067076)
     { id = 1067076 },
     { id = 1067044 },           -- épique
@@ -2713,9 +4123,15 @@ local musiqueTimer = nil
 local musiqueBanque = nil -- banque de combat en cours (relance auto)
 local dernierePiste = nil -- anti-répétition immédiate
 local musiqueHandle = nil -- si le client renvoie un handle : coupure possible
+local musiqueFadeEnCours = false -- fondu de sortie actif : aucune nouvelle
+-- piste ne doit démarrer pendant lui (sinon l'ancienne fichier continue
+-- en doublon : le scan de proximité relance la traque MÊME chasseur mort)
 -- Tempo avant la musique de combat : le jingle « En chasse » doit finir
 -- seul (pas de cacophonie). Un seul timer pendante à la fois.
 local timerMusiqueCombat = nil
+-- Battement de la traque : petit silence après le jingle « En chasse » /
+-- le rugissement de contrat, pour que la piste s'installe APRÈS lui.
+local timerBattementTraque = nil
 
 -- Son environnant : pendant nos pistes (traque, combat, promotion), la
 -- musique et l'ambiance du jeu sont étouffées (sinon cacophonie — PlaySoundFile
@@ -2753,39 +4169,104 @@ MHH_ArreterMusique = function()
     local etatAuStop = musiqueEtat
     musiqueEtat = nil
     if timerMusiqueCombat then pcall(function() timerMusiqueCombat:Cancel() end) timerMusiqueCombat = nil end
+    if timerBattementTraque then pcall(function() timerBattementTraque:Cancel() end) timerBattementTraque = nil end
     if musiqueTimer then pcall(function() musiqueTimer:Cancel() end) musiqueTimer = nil end
     -- Le décor sonore du jeu revient (musique + ambiance restaurées)
     RestaurerSonAmbiant()
-    -- Coupure franche SI le client renvoie un handle sur PlaySoundFile
-    -- (pas de fondu possible sur le canal SFX de ce client — on essaie
-    -- FadeOut si présent, sinon Stop ; souvent aucune des deux n'existe
-    -- et la piste finit naturellement, ce qui reste le plus propre).
-    if musiqueHandle then
+    -- Coupure franche : UNIQUEMENT en repli (client sans C_Timer, où le
+    -- fondu de sortie ne peut pas tourner). Avec C_Timer, on laisse la
+    -- piste vivante et le FONDU DE SORTIE ci-dessous l'emporte en douceur
+    -- (StopSound marchait trop bien : la piste mourait avant le fondu,
+    -- et la fin de chasse s'entendait comme un arrêt net, brutal).
+    local fonduDispo = (etatAuStop and C_Timer and C_Timer.After) and true or false
+    if musiqueHandle and not fonduDispo then
         pcall(function()
-            if musiqueHandle.FadeOut then musiqueHandle:FadeOut(1000)
-            elseif musiqueHandle.Stop then musiqueHandle:Stop() end
+            if type(musiqueHandle) == "table" then
+                if musiqueHandle.FadeOut then musiqueHandle:FadeOut(1000)
+                elseif musiqueHandle.Stop then musiqueHandle:Stop() end
+            else
+                -- Handle numérique : l'arrêt passe par une API globale.
+                -- On les essaie toutes — chaque client custom expose la
+                -- sienne (StopSound retail, C_Sound.StopSound, etc.).
+                if StopSound then StopSound(musiqueHandle) end
+                if C_Sound and C_Sound.StopSound then C_Sound.StopSound(musiqueHandle) end
+                if C_Sound and C_Sound.StopSoundFile then C_Sound.StopSoundFile(musiqueHandle) end
+                if C_Sound and C_Sound.FadeoutSound then C_Sound.FadeoutSound(musiqueHandle, 1000) end
+                if C_Sound and C_Sound.FadeOutSound then C_Sound.FadeOutSound(musiqueHandle, 1000) end
+                -- Certains clients prennent le CHEMIN en argument :
+                if C_Sound and C_Sound.StopSound then C_Sound.StopSound(tostring(musiqueHandle)) end
+            end
         end)
         musiqueHandle = nil
     end
-    -- Filet anti-piste fantôme : sans handle, un son de FICHIER continue
-    -- jusqu'au bout — impossible à stopper proprement. Mais un son de
-    -- fichier ne REPREND jamais après un mute : couper le canal SFX
-    -- 0,15 s le tue net, et l'ambiance du jeu revient dès la réouverture.
-    -- Différé de 2,5 s (laisser finir un éventuel fondu), et SKIP si une
-    -- nouvelle piste a démarré entre-temps (on la tuerait aussi) ou si
-    -- le carillon de victoire sonne encore.
+    -- FONDU DE SORTIE : la piste de combat vit sur le canal SFX de ce
+    -- client (confirmé par /hunt test canal — aucune API d'arrêt ne la
+    -- coupe). On ramp le volume SFX vers 0 sur ~1,6 s, en COURBE DOUCE
+    -- (carrée : imperceptible au début, elle s'incurve à la fin — un
+    -- fondu linéaire par paliers sonnait comme un escalier). Puis on
+    -- coupe le canal 0,4 s : un son de fichier ne reprend jamais après
+    -- un mute (0,15 s laissait la piste REPRENDRE à la restauration —
+    -- testé), la piste est définitivement morte. Volume et canal sont
+    -- ensuite restaurés. Abandonné si une nouvelle piste démarre pendant
+    -- le fondu (le volume est alors rendu intact).
     if etatAuStop and C_Timer and C_Timer.After then
-        C_Timer.After(2.5, function()
-            if musiqueEtat ~= nil then return end -- nouvelle piste en cours
-            if dernierJingleTemps and time() - dernierJingleTemps < 5 then return end
-            pcall(function()
-                local avant = tonumber(GetCVar("Sound_EnableSFX"))
-                if avant == 0 then return end -- le joueur coupe déjà son SFX
-                SetCVar("Sound_EnableSFX", 0)
-                C_Timer.After(0.15, function()
-                    pcall(function() SetCVar("Sound_EnableSFX", 1) end)
+        pcall(function()
+            local avantEnable = tonumber(GetCVar("Sound_EnableSFX"))
+            if avantEnable == 0 then return end -- le joueur coupe déjà son SFX
+            local vol = tonumber(GetCVar("Sound_SFXVolume"))
+            if vol == nil then vol = tonumber(GetCVar("Sound_MasterVolume")) end
+            if not vol or vol <= 0 then return end -- rien à fondre
+            local cvarVol = (tonumber(GetCVar("Sound_SFXVolume")) ~= nil)
+                and "Sound_SFXVolume" or "Sound_MasterVolume"
+            -- Fondu CONTINU, frame par frame (OnUpdate) : des paliers
+            -- espacés de 0,1 s s'entendaient comme un escalier — on
+            -- règle le volume à CHAQUE frame (~60 fois par seconde), la
+            -- descente est inaudible par crans.
+            musiqueFadeEnCours = true
+            -- v0.21 : fondu rallongé (1,2 → 1,6 s) et décroissance plus
+            -- douce (demi-volume tous les 0,6 s) — la fin de chasse
+            -- s'entendait encore comme une coupure un peu franche.
+            local DUREE = 1.6
+            local function rendre()
+                musiqueFadeEnCours = false
+                pcall(function() SetCVar(cvarVol, vol) end)
+            end
+            if not MHH_fadeFrame then MHH_fadeFrame = CreateFrame("Frame") end
+            local ecoule = 0
+            MHH_fadeFrame:Hide()
+            MHH_fadeFrame:SetScript("OnUpdate", function(self, elapsed)
+                ecoule = ecoule + (elapsed or 0)
+                if musiqueEtat ~= nil then -- nouvelle piste : abandon
+                    self:SetScript("OnUpdate", nil)
+                    self:Hide()
+                    rendre()
+                    return
+                end
+                local t = ecoule / DUREE
+                if t >= 1 then
+                    -- Volume à zéro : on tue le fichier en coupant le
+                    -- canal assez longtemps, puis tout revient.
+                    self:SetScript("OnUpdate", nil)
+                    self:Hide()
+                    pcall(function() SetCVar("Sound_EnableSFX", 0) end)
+                    C_Timer.After(0.4, function()
+                        if musiqueEtat ~= nil then rendre() return end
+                        pcall(function()
+                            SetCVar("Sound_EnableSFX", 1)
+                            SetCVar(cvarVol, vol)
+                        end)
+                        musiqueFadeEnCours = false
+                    end)
+                    return
+                end
+                -- Décroissance exponentielle (demi-volume tous les 0,5 s) :
+                -- PERÇUE comme linéaire par l'oreille, contrairement à une
+                -- rampe de volume qui s'entend comme un curseur tiré.
+                pcall(function()
+                    SetCVar(cvarVol, vol * (0.5 ^ (ecoule / 0.6)))
                 end)
             end)
+            MHH_fadeFrame:Show()
         end)
     end
     -- NB : plus aucun StopMusic — depuis qu'on passe par PlaySoundFile (canal
@@ -2815,17 +4296,41 @@ end
 -- musiques de l'addon. Repli 828 si le fichier échoue.
 JouerJingleVictoire = function()
     dernierJingleTemps = time()
-    local res = JouerFichierBlinde(619)
-    if res == nil then
-        JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_COMPLETE or 828)
+    -- Mini jingle de victoire : la fanfare « mission de fief réussie »
+    -- (kit 44294, présent dans les constantes de ce client — symétrique
+    -- du stinger d'échec 43503). Fichier 619 en second essai (le « ding »
+    -- de quête terminée, toujours là), repli SoundKit 828.
+    if JouerFichierBlinde(44294) == nil then
+        local res = JouerFichierBlinde(619)
+        if res == nil then
+            JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_COMPLETE or 828)
+        end
     end
+end
+
+-- Son d'échec « chasse ratée » : le kit igQuestFailed n'EXISTE PAS dans
+-- les SoundKitConstants de ce client Forever (845 = QuestLogClose, pas
+-- QuestFailed — d'où le silence). L'équivalent thématique qui Y figure :
+-- le stinger « mission échouée » des missions de fief, kit 43503
+-- (UI_GARRISON_MISSION_COMPLETE_MISSION_FAIL_STINGER).
+JouerJingleEchec = function()
+    dernierJingleTemps = time()
+    JouerSon(43503) -- stinger d'échec (constantes Forever)
 end
 
 local function JouerPisteWoW(piste)
     dernierePiste = piste.id
     musiqueHandle = nil
     local res = JouerFichierBlinde(piste.id)
-    if type(res) == "table" and (res.Stop or res.FadeOut) then musiqueHandle = res end
+    -- Handle de N'IMPORTE QUELLE forme : table (.Stop/.FadeOut) ou NUMÉRO
+    -- (style retail : StopSound(id)). Avant, seul le type table était
+    -- capturé — si le client renvoie un numéro, la piste de combat était
+    -- impossible à couper et jouait jusqu'au bout après la mort de la bête.
+    if res ~= nil and res ~= true then musiqueHandle = res end
+    if DB and DB.config.debug then
+        DebugChasse("musique", "handle=" .. tostring(musiqueHandle)
+            .. " type=" .. type(musiqueHandle))
+    end
     return piste.d
 end
 
@@ -2845,11 +4350,55 @@ end
 -- (déjà déclaré en tête de fichier : FinChasseVictoire l'appelle avant)
 MHH_JouerMusique = function(evenement, duree, piste, banque)
     if not DB or (DB.config.musique or "wow") == "off" then return end
+    -- Fondu de sortie en cours : démarrer une piste maintenant le ferait
+    -- échouer (le fondu s'interrompt, l'ancienne piste survit en doublon)
+    if musiqueFadeEnCours then return end
     local m = MHH_MUSIQUES[evenement]
     if not m then return end
+    -- TEMPS DE BATTEMENT (traque uniquement, lancement à froid) : le
+    -- jingle « En chasse » / le rugissement de contrat doit finir SEUL —
+    -- la piste s'installe 1,5 s plus tard. Un rappel de traque pendant
+    -- le battement est ignoré ; si un combat démarre entre-temps, le
+    -- battement s'annule (la musique de combat prend le relais).
+    if evenement == "traque" and not piste and not musiqueEtat then
+        if timerBattementTraque then return end
+        musiqueEtat = "traque" -- l'état est posé dès maintenant
+        local dTraque = duree or 120
+        local okTimer = pcall(function()
+            timerBattementTraque = C_Timer.NewTimer(1.5, function()
+                timerBattementTraque = nil
+                if musiqueEtat == "traque" then MHH_JouerMusique("traque", dTraque) end
+            end)
+        end)
+        if not okTimer or not timerBattementTraque then
+            -- Client sans C_Timer : la piste démarre sans battement
+            timerBattementTraque = nil
+            musiqueEtat = nil
+            MHH_JouerMusique("traque", dTraque)
+        end
+        return
+    end
     musiqueEtat = evenement
     -- Une piste à nous se joue : le décor sonore du jeu se tait
     CouperSonAmbiant()
+    -- Changement d'état (traque → combat surtout) : couper FRANCHEMENT la
+    -- piste précédente. JouerPisteWoW écrase le handle sans l'arrêter —
+    -- la traque continuait donc PAR-DESSUS la musique de combat
+    -- (cacophonie à l'engagement).
+    if musiqueHandle then
+        pcall(function()
+            if type(musiqueHandle) == "table" then
+                if musiqueHandle.FadeOut then musiqueHandle:FadeOut(400)
+                elseif musiqueHandle.Stop then musiqueHandle:Stop() end
+            else
+                if StopSound then StopSound(musiqueHandle) end
+                if C_Sound and C_Sound.StopSound then C_Sound.StopSound(musiqueHandle) end
+                if C_Sound and C_Sound.StopSoundFile then C_Sound.StopSoundFile(musiqueHandle) end
+                if C_Sound and C_Sound.FadeOutSound then C_Sound.FadeOutSound(musiqueHandle, 400) end
+            end
+        end)
+        musiqueHandle = nil
+    end
     -- Canal SFX via PlaySoundFile : PlayMusic est muet sur ce serveur.
     -- Pas de boucle sur ce canal — la durée des pistes sert donc au relais.
     if piste then
@@ -2917,6 +4466,7 @@ function MHH_LancerMusiqueCombat()
     -- Décalage : le jingle de mise en chasse joue d'abord seul
     local banque = epique and MHH_PISTES_COMBAT_EPIQUE or MHH_PISTES_COMBAT_NORMAL
     if timerMusiqueCombat then pcall(function() timerMusiqueCombat:Cancel() end) timerMusiqueCombat = nil end
+    if timerBattementTraque then pcall(function() timerBattementTraque:Cancel() end) timerBattementTraque = nil end
     pcall(function()
         timerMusiqueCombat = C_Timer.NewTimer(4, function()
             timerMusiqueCombat = nil
@@ -2934,10 +4484,13 @@ end
 local function ContratQuotidien()
     if not DB then return end
     local aujourdhui = date("%y%m%d")
-    -- Déjà tiré aujourd'hui : rien à faire, SAUF si la cible manque
-    -- (sauvegarde d'une version antérieure sans cibleJour) → on la retire.
-    if DB.contratJour == aujourdhui and DB.cibleJour
-        and DB.offresJour and DB.offresJour.date == aujourdhui then return end
+    -- Déjà tiré aujourd'hui : rien à faire, SAUF si la liste d'offres est
+    -- plus courte que 7 (sauvegarde d'une version antérieure à 5 lignes) :
+    -- on COMPLÈTE la liste au log, sans retirer la cible du jour.
+    local dejaTire = DB.contratJour == aujourdhui and DB.cibleJour
+        and DB.offresJour and DB.offresJour.date == aujourdhui
+    local offres = (dejaTire and DB.offresJour.noms) or {}
+    if dejaTire and #offres >= 7 then return end
     DB.contratJour = aujourdhui
     local zone = GetZoneText() or ""
     local locaux, tous = {}, {}
@@ -2949,18 +4502,27 @@ local function ContratQuotidien()
     end
     local source = (#locaux > 0) and locaux or tous
     if #source == 0 then return end
-    local nom = source[math.random(#source)]
-    -- La cible du jour est TOUJOURS mémorisée (plaque Accueil), même si
-    -- le joueur a déjà un contrat en cours (le sien prime).
-    DB.cibleJour = nom
-    DB.cibleJourZone = MHH_CATALOGUE[nom] or zone
+    local nom
+    if dejaTire then
+        nom = DB.cibleJour -- complément d'une liste courte : cible figée
+    else
+        nom = source[math.random(#source)]
+        -- La cible du jour est TOUJOURS mémorisée (plaque Accueil), même
+        -- si le joueur a déjà un contrat en cours (le sien prime).
+        DB.cibleJour = nom
+        DB.cibleJourZone = MHH_CATALOGUE[nom] or zone
+    end
     -- Offres du jour (fenêtre Contrats) : la cible du jour (prime +20)
-    -- et 4 gibiers piochés dans tout le carnet (prime +5 chacun : de quoi
+    -- et 6 gibiers piochés dans tout le carnet (prime +5 chacun : de quoi
     -- agrémenter le choix, sans concurrencer l'offre spéciale).
-    local offres = { nom }
-    local pris = { [nom] = true }
+    local pris = {}
+    for _, o in ipairs(offres) do pris[o] = true end
+    if #offres == 0 then
+        offres[#offres + 1] = nom
+        pris[nom] = true
+    end
     local gardes = 0
-    while #offres < 5 and #tous > 1 and gardes < 200 do
+    while #offres < 7 and #tous > 1 and gardes < 400 do
         gardes = gardes + 1
         local cand = tous[math.random(#tous)]
         if not pris[cand] then
@@ -2969,6 +4531,7 @@ local function ContratQuotidien()
         end
     end
     DB.offresJour = { date = aujourdhui, noms = offres }
+    if dejaTire then return end -- complément silencieux : pas de toast
     ToastCibleDuJour(nom, MHH_CATALOGUE[nom] or zone)
     cibleJourToastMontre = true
     if not DB.contrat then
@@ -3095,9 +4658,40 @@ function MHH_AnnonceZone(force) -- globale : appelable depuis /hunt test
 end
 
 -- Loot : succès « Curieux de butin » (objet bleu+)
--- Exténué (clin d'œil MH « drooling ») : annoncé une fois quand la cible
--- de la chasse active passe sous 25% de vie, remis à zéro si elle remonte
-local eteintAnnonce = false
+-- [Retiré v0.29] Clin d'œil MH « EXTÉNUÉ » (bave sous 25% de vie) :
+-- abandonné — ce client interdit au Lua d'addon toute lecture des PV
+-- des mobs (API, dichotomie, tostring, GUID, barres d'UI : tout muré).
+
+-- Vérifie l'état de la cible chassée : mort sous le viseur (validation
+-- tolérante de la prise). L'ancien clin d'œil « EXTÉNUÉ » a été retiré
+-- en v0.29 (PV des mobs illisibles sur ce client).
+-- Factorisée car appelée depuis DEUX endroits : le handler UNIT_HEALTH
+-- et un ticker de secours (0,5 s) — sur certains clients, UNIT_HEALTH
+-- ne se déclenche pas pour les PNJ ciblés, le ticker garantit que la
+-- détection a lieu quoi qu'il arrive.
+local function VerifierVieCible()
+    if not chasseActive then return end
+    if not UnitExists("target") then return end
+    local okNom, nom = pcall(function() return UnitName("target") end)
+    if not (okNom and nom == chasseActive) then return end
+    -- Détection de la mise à mort TOLÉRANTE : dès que la bête chassée
+    -- meurt sous le viseur, la prise vaut — quel que soit le canal.
+    local okMort, mort = pcall(function() return UnitIsDead("target") end)
+    if okMort and mort then
+        DebugChasse("viseur", chasseActive .. L(" mort sous le viseur"))
+        local nomPrise = chasseActive
+        C_Timer.After(0, function()
+            if chasseActive == nomPrise then FinChasseVictoire(nomPrise) end
+        end)
+        return
+    end
+    -- [Retiré v0.29] Clin d'œil MH « EXTÉNUÉ » sous 25% de vie :
+    -- abandonné. Ce client verrouille TOUT accès aux PV des mobs
+    -- pour le Lua d'addon : UnitHealth/Max/Percent, dichotomie,
+    -- tostring puis match/format/concat, GUID, et même les barres
+    -- d'UI ne sont pas exposées (sondes v0.20 à v0.28). La mort
+    -- sous le viseur (ci-dessus) reste le seul signal utilisable.
+end
 -- Traitement de la sélection de cible : détecte le gibier et lance la
 -- chasse. Factorisée car appelée depuis PLAYER_TARGET_CHANGED ET depuis
 -- PLAYER_ALIVE (fantôme qui redevient vivant en gardant la cible).
@@ -3106,7 +4700,10 @@ local function TraiterCible()
     -- Portrait live dans le carnet s'il est ouvert
     if RaffraichirCarnet and carnet and carnet:IsShown() then RaffraichirCarnet() end
     if UnitExists("target") and not UnitIsFriend("player", "target") and not UnitIsPlayer("target") then
-        local nom = UnitName("target") or ""
+        -- v0.30 : nom parfois « secret » (tab-targeting en donjon) — sans
+        -- nom utilisable, impossible de démarrer une chasse proprement.
+        local nom = NomOrdinaire(UnitName("target"))
+        if not nom then return end
         local classification = UnitClassification("target") -- "rare", "rareelite", "elite", "normal"
         local niveau = UnitLevel("target")
         if classification == "rare" or classification == "rareelite" then
@@ -3118,7 +4715,17 @@ local function TraiterCible()
                 DB.decouverts[nom] = { kills = 0, vu = true, zone = GetZoneText(), decouvert = time(), id = idR, nouveau = true }
                 DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Nouveau monstre découvert : |cffffff00") .. nom .. "|r (" .. GetZoneText() .. L(") — /hunt add pour l'inscrire au carnet."))
                 DebloquerSucces("decouverte")
+                MHH_VerifierRencontres(nom)
+            elseif not DB.rencontres[nom] then
+                -- v0.119 : PREMIÈRE RENCONTRE — le succès « découverte » ne
+                -- pouvait plus tomber avec un carnet data complet : il compte
+                -- désormais la première fois qu'on CROISE un rare du carnet.
+                DB.rencontres[nom] = time()
+                DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Première rencontre : |cffffff00") .. nom .. "|r.")
+                DebloquerSucces("decouverte")
+                MHH_VerifierRencontres(nom)
             end
+            if nbDecouverts() >= 5 then DebloquerSucces("explorateur") end
             DebutChasse(nom, classification, niveau)
         elseif MHH_CATALOGUE[nom] or DB.decouverts[nom] then
             DebutChasse(nom, classification, niveau)
@@ -3131,6 +4738,21 @@ local function OnEvenementPrincipal(self, event, ...)
         local nom = ...
         if nom == MHH_ADDON_NAME then
             InitDB()
+            -- ZONES RÉELLES (autofix « Mezzir ») : chaque fiche de
+            -- découverte capture le GetZoneText() du SERVEUR au moment
+            -- de la découverte — pas les traductions (parfois custom)
+            -- du data file. On les applique au catalogue au chargement :
+            -- une zone mal nommée dans le data ne peut plus cacher un
+            -- gibier dans l'onglet de sa vraie zone.
+            if DB.decouverts then
+                for nomD, d in pairs(DB.decouverts) do
+                    if type(d) == "table" and d.zone and d.zone ~= ""
+                        and MHH_CATALOGUE[nomD] and MHH_CATALOGUE[nomD] ~= d.zone then
+                        DebugChasse("zone", nomD .. " : " .. tostring(MHH_CATALOGUE[nomD]) .. " → " .. d.zone .. " (autofix découverte)")
+                        MHH_CATALOGUE[nomD] = d.zone
+                    end
+                end
+            end
             -- AUTO-RÉPARATION (une seule fois) : les versions antérieures
             -- pouvaient laisser Sound_EnableMusic/Ambience à 0 dans la
             -- config du client (déconnexion pendant une piste). On rend
@@ -3152,7 +4774,7 @@ local function OnEvenementPrincipal(self, event, ...)
             if AppliquerTexUI then AppliquerTexUI() end
             -- Piste du pensionnaire dévoué (une fois par jour, après l'init)
             pcall(PisteQuotidienneAmi)
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r chargé. /hunt pour ouvrir le carnet. ") .. nbChasses() .. L(" chasses au compteur."))
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r ") .. "|cffa58b54" .. MHH_VERSION .. "|r" .. L(" chargé. /hunt pour ouvrir le carnet. ") .. nbChasses() .. (nbChasses() == 1 and L(" chasse au compteur.") or L(" chasses au compteur.")))
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Fin de combat : la musique de combat s'arrête quoi qu'il arrive
@@ -3189,7 +4811,27 @@ local function OnEvenementPrincipal(self, event, ...)
                 DebugChasse("finCombat", nomChasse .. L(" — fuite annoncée dans 3,5 s si aucune prise"))
                 C_Timer.After(3.5, function()
                     if chasseActive ~= nomChasse then return end
-                    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffa58b54Le monstre vous a échappé…|r La chasse de ") .. nomChasse .. L(" est suspendue."))
+                    -- DERNIER FILET avant le verdict de fuite : la bête a pu
+                    -- mourir APRÈS la perte de ciblage (DoT) et UNIT_DIED
+                    -- peut manquer. On redemande au viseur ET au survol.
+                    local encoreMorte = false
+                    pcall(function()
+                        -- Le cadavre peut être sous le viseur, le survol, le
+                        -- focus, la cible du familier ou celle d'un coéquipier :
+                        -- on les consulte TOUS avant de décréter la fuite.
+                        for _, u in ipairs({ "target", "mouseover", "focus", "pettarget",
+                            "party1target", "party2target", "party3target", "party4target" }) do
+                            if UnitExists(u) and (UnitName(u) or "") == nomChasse
+                                and UnitIsDead(u) then encoreMorte = true end
+                        end
+                    end)
+                    if encoreMorte then
+                        DebugChasse("finCombat", nomChasse .. L(" — cadavre repéré au dernier filet : prise !"))
+                        FinChasseVictoire(nomChasse)
+                        return
+                    end
+                    AnnoncerSuspension(nomChasse, L("|cffffd100[MH Hunt]|r |cffa58b54Le monstre vous a échappé…|r La chasse de ") .. nomChasse .. L(" est suspendue."))
+                    EmoteDeuilChasseur() -- v0.35 : le chasseur tombe à genou
                     chasseSuspendue = {
                         nom = nomChasse,
                         debutTemps = chasseDebutTemps,
@@ -3201,6 +4843,7 @@ local function OnEvenementPrincipal(self, event, ...)
                         quand = time(),
                     }
                     chasseActive = nil
+                    if MHH_ArreterMusique then MHH_ArreterMusique() end
                     MettreAJourIndicateur()
                 end)
             end
@@ -3222,7 +4865,7 @@ local function OnEvenementPrincipal(self, event, ...)
             -- Jamais de suspension si le CHASSEUR est mort (PLAYER_DEAD
             -- clôt la chasse) : sinon elle se « reprenait » au cimetière
             if UnitIsDeadOrGhost("player") then
-                FinChasseEchec()
+                FinChasseEchec(true)
             else
                 -- Cible perdue sans combat (désélection, cible amie, gibier
                 -- hors carnet) : la chasse est suspendue — mais re-cibler
@@ -3258,7 +4901,35 @@ local function OnEvenementPrincipal(self, event, ...)
         -- fantôme ne comptait pas.
         if not UnitIsDeadOrGhost("player") then TraiterCible() end
     elseif event == "PLAYER_DEAD" then
-        FinChasseEchec()
+        -- CUISINE : mort du chasseur — le repas préparé est perdu (gâché),
+        -- petit message au chat ; l'onglet Cuisine se rafraîchit à l'ouverture.
+        if DB and DB.repas then
+            local r = CUISINE_RECETTES and CUISINE_RECETTES[DB.repas]
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cff8a6d3b" .. (r and r.nom or L("Le repas préparé"))
+                .. L(" a refroidi — le repas préparé est perdu à la mort du chasseur.|r"))
+            DB.repas = nil
+        end
+        local chasseEnCours = (chasseActive ~= nil or chasseSuspendue ~= nil)
+        FinChasseEchec(true)
+        -- Mort face à un RARE sans chasse active (bête non répertoriée au
+        -- carnet : aucune chasse n'a démarré, FinChasseEchec ne fait rien)
+        -- : le son d'échec joue quand même — un rare qui vous tue mérite
+        -- sa défaite, contrat ou pas. Seul le SON : pas de message ni de
+        -- bannière (ça n'est pas une chasse).
+        if not chasseEnCours and DB and DB.config.son and JouerJingleEchec then
+            local okCls, cls = pcall(function()
+                return UnitExists("target") and UnitClassification("target") or nil
+            end)
+            if okCls and cls and string.find(cls, "rare") then
+                if musiqueFadeEnCours and C_Timer and C_Timer.After then
+                    -- Fondu de piste en cours : attendre qu'il finisse
+                    -- (le stinger vit sur le même canal SFX)
+                    C_Timer.After(1.8, function() JouerJingleEchec() end)
+                else
+                    JouerJingleEchec()
+                end
+            end
+        end
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         if not chasseActive then
             -- Filet de secours : la bête vient de mourir alors que la
@@ -3286,29 +4957,55 @@ local function OnEvenementPrincipal(self, event, ...)
                 return
             end
         end
-        local _, sousEvent, _, sourceGUID, sourceNom, _, _, _, destNom = CombatLogGetCurrentEventInfo()
+        local infos = { CombatLogGetCurrentEventInfo() }
+        local sousEvent = infos[2]
+        local destNom = infos[9]
         if sousEvent == "UNIT_DIED" and chasseActive then
             DebugChasse("journal", "UNIT_DIED : " .. tostring(destNom) .. L(" (chassé : ") .. chasseActive .. ")")
         end
-        if sousEvent == "UNIT_DIED" and destNom == chasseActive then
-            local parLeJoueur = (sourceGUID == UnitGUID("player"))
-            local parLeGroupe = sourceNom and (UnitInParty(sourceNom) or UnitInRaid(sourceNom))
-            DebugChasse("journal", "killSouple=" .. tostring(DB.config.killSouple)
-                .. " parLeJoueur=" .. tostring(parLeJoueur)
-                .. " parLeGroupe=" .. tostring(parLeGroupe))
-            -- pcall : si Midnight bloque quelque chose en contexte tainté,
-            -- la prise reste acquittée (anti-double en tête de fonction)
-            local okF, errF
-            if DB.config.killSouple then
-                okF, errF = pcall(FinChasseVictoire, destNom)
-            elseif parLeJoueur or parLeGroupe then
-                okF, errF = pcall(FinChasseVictoire, destNom)
+        if sousEvent == "UNIT_DIED" and chasseActive then
+            -- TOLÉRANT : la position du nom de la victime VARIE selon les
+            -- clients (Midnight) — si le nom chassé apparaît N'IMPORTE OÙ
+            -- dans le payload, c'est lui qui est mort. L'ancien test sur
+            -- la seule 9e valeur manquait des kills entiers (message
+            -- « Le monstre vous a échappé » juste après une prise).
+            local mortDuChasse = (destNom == chasseActive)
+            if not mortDuChasse then
+                for _, v in ipairs(infos) do
+                    if v == chasseActive then mortDuChasse = true break end
+                end
             end
-            if not okF then DebugChasse("journal", L("ERREUR victoire : ") .. tostring(errF)) end
+            if mortDuChasse then
+                local guidJoueur = UnitGUID("player")
+                local parLeJoueur, parLeGroupe = false, false
+                for _, v in ipairs(infos) do
+                    if v == guidJoueur then parLeJoueur = true end
+                    if type(v) == "string" and v ~= "" and v ~= chasseActive then
+                        local dansGroupe = pcall(UnitInParty, v) or pcall(UnitInRaid, v)
+                        if dansGroupe then parLeGroupe = true end
+                    end
+                end
+                DebugChasse("journal", "killSouple=" .. tostring(DB.config.killSouple)
+                    .. " parLeJoueur=" .. tostring(parLeJoueur)
+                    .. " parLeGroupe=" .. tostring(parLeGroupe))
+                -- pcall : si Midnight bloque quelque chose en contexte tainté,
+                -- la prise reste acquittée (anti-double en tête de fonction)
+                local okF, errF
+                if DB.config.killSouple then
+                    okF, errF = pcall(FinChasseVictoire, chasseActive)
+                elseif parLeJoueur or parLeGroupe then
+                    okF, errF = pcall(FinChasseVictoire, chasseActive)
+                end
+                if not okF then DebugChasse("journal", L("ERREUR victoire : ") .. tostring(errF)) end
+            end
         elseif sousEvent == "AURA_APPLIED" and destNom == chasseActive then
-            -- Piège gelé : le monstre chassé est capturé (spellId 3355 en Classic)
+            -- PIÈGE « FAÇON MH » : le monstre CONTRÔLÉ est capturé.
+            -- Ouvert à toutes les classes qui contrôlent (retour de
+            -- test : piège de glace seul = chasseur seulement) :
+            -- racines, stuns, incapacités, métamorphoses, peurs, ban
+            -- — cf. table MHH_PIEGES_CAPTURE.
             local spellId = select(12, CombatLogGetCurrentEventInfo())
-            if spellId == 3355 then
+            if MHH_PIEGES_CAPTURE and MHH_PIEGES_CAPTURE[spellId] then
                 chassePiegee = true
                 DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Le monstre est pris au piège !"))
             end
@@ -3365,49 +5062,28 @@ local function OnEvenementPrincipal(self, event, ...)
                 if UnitHealth("player") < chasseDebutVie then chasseVieTouchee = true end
             end)
         end
-        if chasseActive and UnitExists("target") and UnitName("target") == chasseActive then
-            -- Détection de la mise à mort TOLÉRANTE : certains clients
-            -- n'offrent pas d'UNIT_DIED exploitable dans le journal de
-            -- combat. Dès que la bête chassée meurt sous le viseur, la
-            -- prise vaut — quel que soit le canal qui l'a signalée.
-            local okMort, mort = pcall(function() return UnitIsDead("target") end)
-            if okMort and mort then
-                DebugChasse("viseur", chasseActive .. L(" mort sous le viseur"))
-                local nomPrise = chasseActive
-                C_Timer.After(0, function()
-                    if chasseActive == nomPrise then FinChasseVictoire(nomPrise) end
-                end)
-                return
-            end
-            -- Clin d'œil MH : le monstre « droole » sous 25% de vie.
-            -- NB : sur certains clients (Midnight), la vie des PNJ est un
-            -- « secret number » : l'arithmétique (/ *) est interdite, mais
-            -- les COMPARAISONS sont permises. On essaie dans l'ordre :
-            -- pourcentage direct (UnitHealthPct), sinon ratio — tout en
-            -- pcall : jamais de spam d'erreurs, la détection s'active
-            -- selon ce que le client autorise.
-            pcall(function()
-                local faible = false
-                if UnitHealthPct then
-                    local p = UnitHealthPct("target")
-                    if p > 1 then faible = (p < 25) else faible = (p < 0.25) end
-                else
-                    faible = UnitHealth("target") / math.max(1, UnitHealthMax("target")) < 0.25
-                end
-                if faible then
-                    if not eteintAnnonce then
-                        eteintAnnonce = true
-                        AfficherBanniere(L("EXTÉNUÉ !"), 1, 0.55, 0.2)
-                        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. chasseActive .. L(" est exténué — il droole sur ses pattes…"))
-                    end
-                else
-                    eteintAnnonce = false
-                end
+        -- Mort sous le viseur : logique factorisée dans
+        -- VerifierVieCible() (appelée aussi par le ticker de secours).
+        if chasseActive then VerifierVieCible() end
+    elseif event == "CHAT_MSG_COMBAT_HOSTILE_DEATH" or event == "COMBAT_LOG_EVENT" then
+        -- Canaux de mort de repli (cf. v0.19) : le journal de combat
+        -- filtré est PROTÉGÉ sur ce client. Ces canaux annoncent la
+        -- mort d'un hostile — on ne valide QUE si le nom du gibier
+        -- chassé figure dans le message (sinon ce n'est pas notre prise).
+        -- COMBAT_LOG_EVENT passe des arguments numériques (timestamp…) :
+        -- seul le texte exploitable est retenu.
+        local texte = ...
+        if chasseActive and type(texte) == "string" and string.find(texte, chasseActive, 1, true) then
+            local nomPrise = chasseActive
+            DebugChasse("combatMort", nomPrise .. L(" — mort signalée par le canal de combat (repli)"))
+            C_Timer.After(0, function()
+                if chasseActive == nomPrise then FinChasseVictoire(nomPrise) end
             end)
         end
     elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
         EnregistrerCarteZone()
         ContratQuotidien()
+        TirageMissionCachee()
         MHH_AnnonceZone()
         -- Rappel du toast cible du jour à chaque connexion/reload
         -- (une fois par session ; ContratQuotidien l'affiche au tirage du jour)
@@ -3428,8 +5104,12 @@ local function OnEvenementPrincipal(self, event, ...)
                 if z == zoneCur and MHH_EstNomAffichable(nom) then nbGibiersZone = nbGibiersZone + 1 end
             end
             if nbGibiersZone > 0 and math.random(100) <= 25 then
-                DB.herbe = (DB.herbe or 0) + 1
-                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Cueilli en chemin : |cffff7a1a1 herbe aromatique|r.")
+                if (DB.herbe or 0) >= (CUISINE_INGREDIENTS.herbe.max or 10) then
+                    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Sac d'herbes plein — la cueillette se perd (cuisine !)."))
+                else
+                    DB.herbe = (DB.herbe or 0) + 1
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Cueilli en chemin : |cffff7a1a1 herbe aromatique|r.")
+                end
             end
         end
     elseif event == "PLAYER_LOGOUT" then
@@ -3442,14 +5122,24 @@ local function OnEvenementPrincipal(self, event, ...)
         -- points, chasses, enclos, dernière prise — jamais le carnet
         local prefix, msg, canal, expediteur = ...
         if prefix == "MHHUNT" and type(msg) == "string" and msg:sub(1, 6) == "CARTE:" then
-            local rang, points, chasses, captures, trophee = strsplit("|", msg:sub(7))
+            -- v0.56 : 1er champ = INDEX du rang (l'expéditeur traduit le
+            -- nom, le récepteur re-localise depuis son propre MHH_RANGS).
+            local idxRang, points, chasses, captures, trophee = strsplit("|", msg:sub(7))
             if type(expediteur) == "string" then expediteur = strsplit("-", expediteur) end
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Carte de chasseur — |cffffff00")
-                .. (expediteur or "?") .. "|r, |cffc9a24a" .. (rang or "?") .. "|r : "
-                .. (tonumber(points) or 0) .. " pts, " .. (tonumber(chasses) or 0) .. L(" chasses, ")
+            local idx = tonumber(idxRang) or 1
+            local nomRang = (MHH_RANGS and MHH_RANGS[idx] and MHH_RANGS[idx].nom) or "?"
+            -- v0.59 : palette du liseré du carnet (MHH_RangHex) + le rang
+            -- s'affiche AVANT le pseudo, comme sur les cartes de MH.
+            local col = MHH_RangHex and MHH_RangHex(idx) or "|cffa58b54"
+            local nCh = tonumber(chasses) or 0
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Carte de chasseur — ")
+                .. col .. "[" .. nomRang .. "]|r |cffffff00" .. (expediteur or "?") .. "|r : "
+                .. (tonumber(points) or 0) .. " pts, " .. nCh
+                .. (nCh == 1 and L(" chasse, ") or L(" chasses, "))
                 .. (tonumber(captures) or 0) .. L(" spécimens en enclos.")
                 .. ((trophee and trophee ~= "-" and trophee ~= "") and (L(" Dernière prise : |cffa0ff50") .. trophee .. "|r.") or ""))
-            AfficherBanniere(L("CARTE DE CHASSEUR — ") .. (expediteur or "?"), 1, 0.84, 0)
+            AfficherBanniere(L("CARTE DE CHASSEUR — ") .. col .. "[" .. nomRang .. "]|r "
+                .. (expediteur or "?"), 1, 0.84, 0)
         end
     elseif event == "CHAT_MSG_LOOT" then
         local texte = ...
@@ -3462,24 +5152,72 @@ local function OnEvenementPrincipal(self, event, ...)
 end
 
 local f = CreateFrame("Frame")
-f:RegisterEvent("ADDON_LOADED")
-f:RegisterEvent("PLAYER_TARGET_CHANGED")
-f:RegisterEvent("PLAYER_REGEN_ENABLED")
-f:RegisterEvent("PLAYER_REGEN_DISABLED")
-f:RegisterEvent("PLAYER_DEAD")
-f:RegisterEvent("PLAYER_ALIVE") -- fantôme qui redevient vivant avec la cible
-f:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-f:RegisterEvent("UNIT_HEALTH")
+-- NB (correctif v0.18 du popup « réservé à l'UI de Blizzard ») : sur les
+-- clients custom, l'enregistrement de certains événements est PROTÉGÉ —
+-- COMBAT_LOG_EVENT_UNFILTERED déclenchait le blocage au chargement depuis
+-- la première version. Tout passe donc par pcall : un événement absent
+-- n'est qu'un canal de détection en moins, jamais un blocage. Les
+-- autres canaux (viseur, ticker chrono, scan de cadavre à la fin du
+-- combat, dernier filet différé) couvrent déjà la prise.
+local function EnregistrerEvenement(evenement, note)
+    local ok = pcall(function() f:RegisterEvent(evenement) end)
+    if not ok and note then
+        DebugChasse("evenements", evenement .. " : " .. note)
+    end
+    return ok
+end
+EnregistrerEvenement("ADDON_LOADED")
+EnregistrerEvenement("PLAYER_TARGET_CHANGED")
+EnregistrerEvenement("PLAYER_REGEN_ENABLED")
+EnregistrerEvenement("PLAYER_REGEN_DISABLED")
+EnregistrerEvenement("PLAYER_DEAD")
+-- v0.31 : COMBAT_LOG_EVENT_UNFILTERED n'est plus DEMANDÉ du tout. Ce
+-- canal est protégé sur ce client depuis la v0.18 : le pcall évitait le
+-- popup, mais chaque tentative émettait quand même ADDON_ACTION_FORBIDDEN
+-- (loggué par !BugGrabber à chaque chargement). Les canaux de repli
+-- (CHAT_MSG_COMBAT_HOSTILE_DEATH, COMBAT_LOG_EVENT, viseur, ticker,
+-- dernier filet) couvrent déjà la prise — on ne demande plus l'impossible.
+EnregistrerEvenement("PLAYER_ALIVE") -- fantôme qui redevient vivant avec la cible
+-- Canaux de mort de REPLI : l'annonce de mort d'un hostile du client
+-- Vanilla (CHAT_MSG_COMBAT_HOSTILE_DEATH) — le canal de mort le plus
+-- fiable de 1.12. NB v0.32 : COMBAT_LOG_EVENT est AUSSI protégé sur ce
+-- client (ADDON_ACTION_FORBIDDEN à chaque chargement, loggué par
+-- !BugGrabber) — tous les canaux du journal de combat sont murés, on ne
+-- les demande plus du tout. La mort se détecte par l'annonce d'hostile,
+-- le viseur, le ticker et le dernier filet.
+EnregistrerEvenement("CHAT_MSG_COMBAT_HOSTILE_DEATH", L("canal de repli pour la détection des morts"))
+EnregistrerEvenement("UNIT_HEALTH")
+-- Ticker de secours (v0.20) : sur ce client, UNIT_HEALTH peut rester muet
+-- pour les PNJ ciblés (vie « secret number »). On vérifie la cible
+-- chassée toutes les 0,5 s quoi qu'il arrive : mort sous le viseur,
+-- mort sous le viseur de la cible chassée.
+if C_Timer and C_Timer.NewTicker then
+    C_Timer.NewTicker(0.5, function()
+        -- Correctif minuit : sans changement de zone ni reconnexion,
+        -- aucun événement ne relançait ContratQuotidien après minuit —
+        -- l'onglet Contrats restait alors vide jusqu'au /reload.
+        if DB and DB.contratJour ~= date("%y%m%d") then
+            pcall(ContratQuotidien)
+        end
+        -- Rumeurs de guilde : tirage au passage de minuit (idempotent —
+        -- la rumeur du jour pendante est conservée)
+        pcall(TirageMissionCachee)
+        local ok, err = pcall(VerifierVieCible)
+        if not ok and DB and DB.config and DB.config.debug then
+            DebugChasse("err", "ticker : " .. tostring(err))
+        end
+    end)
+end
 -- UPDATE_MOUSEOVER est absent de certains clients Midnight : pcall + repli
 -- sur CURSOR_UPDATE (même usage : survol des plaques pour l'auto-découverte)
-pcall(function() f:RegisterEvent("UPDATE_MOUSEOVER") end)
-pcall(function() f:RegisterEvent("CURSOR_UPDATE") end)
-pcall(function() f:RegisterEvent("WEATHER_CHANGED") end) -- client Forever uniquement
-f:RegisterEvent("CHAT_MSG_LOOT")
-f:RegisterEvent("PLAYER_ENTERING_WORLD")
-f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-f:RegisterEvent("CHAT_MSG_ADDON")
-f:RegisterEvent("PLAYER_LOGOUT") -- pour garantir la restitution du son du jeu
+EnregistrerEvenement("UPDATE_MOUSEOVER")
+EnregistrerEvenement("CURSOR_UPDATE")
+EnregistrerEvenement("WEATHER_CHANGED") -- client Forever uniquement
+EnregistrerEvenement("CHAT_MSG_LOOT")
+EnregistrerEvenement("PLAYER_ENTERING_WORLD")
+EnregistrerEvenement("ZONE_CHANGED_NEW_AREA")
+EnregistrerEvenement("CHAT_MSG_ADDON")
+EnregistrerEvenement("PLAYER_LOGOUT") -- pour garantir la restitution du son du jeu
 pcall(function() -- canal d'addon : carte de chasseur (/hunt carte <joueur>)
     if C_Chat and C_Chat.RegisterAddonMessagePrefix then
         C_Chat.RegisterAddonMessagePrefix("MHHUNT")
@@ -3488,6 +5226,24 @@ pcall(function() -- canal d'addon : carte de chasseur (/hunt carte <joueur>)
     end
 end)
 f:SetScript("OnEvent", OnEvenementPrincipal)
+
+-- Diagnostic « MHHunt a été bloqué » : la popup du client ne dit pas
+-- QUELLE fonction a été jugée « réservée à l'UI de Blizzard » (erreur
+-- présente depuis la première version, cause inconnue). Quand le
+-- client propose ces événements, ils nomment l'addon fautif et la
+-- fonction bloquée : on les imprime dans le chat pour identifier
+-- enfin le coupable — au prochain blocage, la ligne apparaîtra.
+pcall(function()
+    local d = CreateFrame("Frame")
+    d:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+    d:RegisterEvent("ADDON_ACTION_BLOCKED")
+    d:SetScript("OnEvent", function(self, event, addon, func)
+        if addon == "MHHunt" then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Action bloquée (" .. event .. ") : |cffffff00"
+                .. tostring(func) .. "|r — |cffa58b54transmets cette ligne pour corriger le blocage au chargement.|r")
+        end
+    end)
+end)
 
 -- « La bête est dans les parages… » : scan des nameplates toutes les 2 s.
 -- Si le monstre du contrat apparaît à l'écran (sans chasse active), petite
@@ -3594,7 +5350,11 @@ carnet:EnableMouse(true)
 carnet:RegisterForDrag("LeftButton")
 carnet:SetScript("OnDragStart", carnet.StartMoving)
 carnet:SetScript("OnDragStop", carnet.StopMovingOrSizing)
-carnet:SetFrameStrata("MEDIUM")
+-- v0.106 : strate DIALOG — en MEDIUM, la barre de skills du client
+-- passait AU-DESSUS du carnet et de son contenu (retour utilisateur).
+-- DIALOG = strate des fenêtres modales : le carnet et toutes ses
+-- pages (ménagerie comprise) passent devant les barres et la minicarte.
+carnet:SetFrameStrata("DIALOG")
 carnet:Hide()
 
 -- Ouverture standard : toujours recentré à l'écran (un drag accidentel ne
@@ -3759,7 +5519,7 @@ local pageMissions = CreateFrame("Frame", nil, carnet)
 pageMissions:SetAllPoints()
 pageMissions:Hide()
 -- Refresh des nouvelles pages : définis dans leurs blocs do...end respectifs
-local RaffraichirOptions, RaffraichirCuisine
+-- idem : globales préfixées (limite 200 locales)
 
 -- Couleurs par rang (globale : utilisée par l'Accueil pour le liseré du
 -- carnet ET par le Profil pour la bordure du portrait)
@@ -3770,6 +5530,22 @@ MHH_COULEURS_RANG = {
     { 0.78, 0.62, 0.25 }, -- Chasseur accompli : or
     { 0.95, 0.80, 0.35 }, -- Légende de la chasse : or vif
 }
+
+-- v0.60 : couleur du rang en code hexa pour le TEXTE coloré (carte
+-- échangée, Accueil, onglet Guilde). Ici, palette « rareté WoW » : gris →
+-- vert → bleu → violet → orange — lue instantanément par tout joueur.
+-- Le liseré du carnet et le portrait gardent la palette bronze→or MH :
+-- les deux familles cohabitent volontairement (retour chasseur v0.60).
+local MHH_RANG_HEX_WOW = {
+    "|cffa9a9a9", -- Aspirant : gris
+    "|cff1eff0c", -- Chasseur : vert
+    "|cff0070dd", -- Chasseur aguerri : bleu
+    "|cffa335ee", -- Vétéran : violet
+    "|cffff8000", -- Légende de la chasse : orange
+}
+function MHH_RangHex(idx)
+    return MHH_RANG_HEX_WOW[idx or 1] or MHH_RANG_HEX_WOW[1]
+end
 
 -- ================= PAGE ACCUEIL =================
 -- Vue d'ensemble : chasse en cours, dernière prise, journal, progression
@@ -3845,12 +5621,45 @@ accueilSuccesTxt:SetJustifyH("LEFT")
 accueilSuccesTxt:SetTextColor(1, 1, 1)
 accueilSuccesTxt:SetShadowColor(0, 0, 0, 1)
 accueilSuccesTxt:SetShadowOffset(1, -1)
+-- v0.126 : plaque « CARNET COMPLET » (colonne droite, sous le bloc
+-- succès) — affichée UNIQUEMENT quand tous les succès sont obtenus.
+local accueilCompletPlaque = CreateFrame("Frame", nil, pageAccueil, MHH_TEMPLATE_BACKDROP)
+accueilCompletPlaque:SetPoint("TOPLEFT", pageAccueil, "TOPLEFT", 330, -292)
+accueilCompletPlaque:SetSize(246, 36)
+pcall(function()
+    accueilCompletPlaque:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    accueilCompletPlaque:SetBackdropColor(0.30, 0.22, 0.08, 0.85)
+    accueilCompletPlaque:SetBackdropBorderColor(0.85, 0.68, 0.32, 1)
+end)
+local accueilCompletTxt = accueilCompletPlaque:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+pcall(function() accueilCompletTxt:SetFont("Fonts\\FRIZQT__.TTF", 14) end)
+accueilCompletTxt:SetPoint("TOP", accueilCompletPlaque, "TOP", 0, -4)
+accueilCompletTxt:SetText("|cffffd100CARNET COMPLET|r")
+accueilCompletTxt:SetShadowColor(0, 0, 0, 1)
+accueilCompletTxt:SetShadowOffset(1, -1)
+local accueilCompletSous = accueilCompletPlaque:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+accueilCompletSous:SetPoint("TOP", accueilCompletPlaque, "TOP", 0, -21)
+accueilCompletSous:SetText(L("|cffa0ff50" .. "Tous les succès du chasseur sont obtenus !" .. "|r"))
+accueilCompletPlaque:Hide()
 local accueilRangTxt = pageAccueil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 accueilRangTxt:SetPoint("TOPLEFT", pageAccueil, "TOPLEFT", 84, -58)
 accueilRangTxt:SetWidth(472)
 accueilRangTxt:SetJustifyH("LEFT")
 accueilRangTxt:SetShadowColor(0, 0, 0, 1)
 accueilRangTxt:SetShadowOffset(1, -1)
+-- La ligne de rang est CLIQUABLE : elle affiche la voie du chasseur
+-- (souple/stricte), un clic rouvre le serment pour en changer
+local accueilRangBtn = CreateFrame("Button", nil, pageAccueil)
+accueilRangBtn:SetPoint("TOPLEFT", pageAccueil, "TOPLEFT", 80, -54)
+accueilRangBtn:SetSize(480, 22)
+accueilRangBtn:SetScript("OnClick", function() MHH_MontrerSerment() end)
+-- Pas de tooltip : il s'affichait sur toute la largeur de la ligne
+-- (retour de test) — le clic suffit à expliquer le bouton.
 -- Barre de progression du rang de guilde : tout en haut, c'est l'essentiel
 local accueilBarreBord = pageAccueil:CreateTexture(nil, "BACKGROUND")
 accueilBarreBord:SetSize(460, 14)
@@ -4036,6 +5845,8 @@ RaffraichirAccueil = function()
     }, "\n"))
     accueilSuccesTxt:SetText(L("Obtenus : |cffffd100") .. nbSucces .. "|r / " .. #MHH_SUCCES
         .. (nbSucces < #MHH_SUCCES and L(" — le carnet attend ses preuves") or L(" — carnet complet !")))
+    -- v0.126 : plaque dorée quand tout est obtenu
+    accueilCompletPlaque:SetShown(nbSucces >= #MHH_SUCCES and #MHH_SUCCES > 0)
     -- Rang + barre de progression vers le prochain rang
     local points = DB.points or 0
     local idx, rang = RangGuilde(points)
@@ -4047,7 +5858,8 @@ RaffraichirAccueil = function()
     if carnetLisere then
         for i = 1, 4 do carnetLisere[i]:SetColorTexture(cr[1], cr[2], cr[3], 0.95) end
     end
-    accueilRangTxt:SetText(L("Rang de chasseur : |cffffd100") .. rang .. "|r — " .. (DB.points or 0) .. L(" points de chasse"))
+    accueilRangTxt:SetText(L("Rang de chasseur : ") .. MHH_RangHex(idx) .. rang .. "|r"
+        .. L(" — ") .. (DB.config.killSouple and L("|cffff8844voie du compagnon|r") or L("|cff66ccffvoie du loup solitaire|r")))
     local seuilBas = MHH_RANGS[idx].seuil
     local prochainSeuil = MHH_RANGS[idx + 1] and MHH_RANGS[idx + 1].seuil or nil
     if prochainSeuil then
@@ -4143,6 +5955,7 @@ barreRecherche:SetFontObject("GameFontHighlightSmall")
 barreRecherche:SetAutoFocus(false)
 barreRecherche:SetMaxLetters(20)
 barreRecherche:SetJustifyH("LEFT")
+barreRecherche:SetTextInsets(16, 4, 0, 0) -- texte décalé du bord de l'encart
 -- Pas de bordure propre : celle de la barre de filtres sert de cadre
 -- au champ (supprime tout désalignement de double bordure au pixel)
 pcall(function()
@@ -4159,7 +5972,7 @@ barreRecherche:SetScript("OnTextChanged", function(self)
 end)
 barreRecherche:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 barreRecherche.instructions = barreRecherche:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-barreRecherche.instructions:SetPoint("LEFT", 3, -1)
+barreRecherche.instructions:SetPoint("LEFT", 16, -1)
 barreRecherche.instructions:SetTextColor(1, 1, 1)
 barreRecherche.instructions:SetText("Rechercher...")
 barreRecherche:SetScript("OnEditFocusGained", function(self) self.instructions:Hide() end)
@@ -4219,6 +6032,7 @@ messageZoneVide:Hide()
 
 -- Pastille de couleur par zone (MH : chaque biome sa couleur)
 local ZONE_COULEURS = {
+    ["Favoris"] = { 0.95, 0.82, 0.35 },
     ["Bois de la Pénombre"]      = {0.35, 0.60, 0.30},
     ["Comté de l'Ouest"]     = {0.40, 0.55, 0.85},
     ["Durotar"]              = {0.80, 0.35, 0.20},
@@ -4226,16 +6040,14 @@ local ZONE_COULEURS = {
     ["Teldrassil"]           = {0.25, 0.65, 0.35},
     ["Les Tarides"]            = {0.85, 0.70, 0.25},
     ["Les Carmines"]         = {0.55, 0.20, 0.25},
-    ["Bois de la Pénombre"]= {0.45, 0.45, 0.30},
     ["Mille Pointes"]        = {0.75, 0.65, 0.40},
     ["Orneval"]              = {0.30, 0.55, 0.25},
-    ["Steppes ardentes"]     = {0.85, 0.40, 0.15},
-    ["Marais des chagrins"]  = {0.30, 0.50, 0.45},
+    ["Steppes Ardentes"]     = {0.85, 0.40, 0.15},
+    ["Marais des Chagrins"]  = {0.30, 0.50, 0.45},
     ["Les Paluns"]           = {0.35, 0.55, 0.75},
     ["Loch Modan"]           = {0.60, 0.55, 0.30},
-    ["Gangrebois"]           = {0.85, 0.25, 0.30},
+    ["Gangrebois"]           = {0.55, 0.60, 0.25}, -- vert-jaune maladif : le bois n'est pas mort
     ["Tanaris"]               = {0.85, 0.75, 0.45},
-    ["Maleterres ouest"]     = {0.55, 0.55, 0.60},
     ["Gorges des Chants éternels"] = {0.50, 0.35, 0.65},
     ["Sombrerivage"]         = {0.30, 0.40, 0.60},
     ["Les Serres-Rocheuses"]     = {0.45, 0.40, 0.35},
@@ -4246,6 +6058,7 @@ local ZONE_COULEURS = {
     ["Silithus"]             = {0.70, 0.65, 0.35},
     ["Azshara"]              = {0.30, 0.45, 0.70},
     ["Hiverpré"]             = {0.85, 0.90, 0.95},
+    ["Berceau-de-l'Hiver"]   = {0.85, 0.90, 0.95}, -- même neige : le serveur nomme Winterspring ainsi (v0.25)
     ["Dun Morogh"]           = {0.80, 0.85, 0.95},
     ["Clairières de Tirisfal"]   = {0.35, 0.35, 0.40},
     ["Marches de l'Ouest"]   = {0.70, 0.65, 0.35},
@@ -4260,11 +6073,18 @@ local ZONE_COULEURS = {
     ["Maleterres de l'Ouest"] = {0.55, 0.55, 0.60},
     ["Maleterres de l'Est"]  = {0.60, 0.50, 0.55},
     ["Les Hinterlands"]      = {0.35, 0.55, 0.40},
+    ["Hurlevent"]            = {0.35, 0.50, 0.85}, -- bleu cité
 }
 local COULEUR_DEFAUT = {0.78, 0.62, 0.25} -- doré
 
+-- Lookup insensible a la casse : le data file et le client n'écrivent
+-- pas toujours les zones pareil (déja corrigé ci-dessus, ceinture +
+-- bretelles pour l'avenir).
+local ZONE_COULEURS_NORM = {}
+for k, v in pairs(ZONE_COULEURS) do ZONE_COULEURS_NORM[string.lower(k)] = v end
 local function CouleurZone(zone)
-    return ZONE_COULEURS[zone] or COULEUR_DEFAUT
+    if not zone then return COULEUR_DEFAUT end
+    return ZONE_COULEURS_NORM[string.lower(zone)] or ZONE_COULEURS[zone] or COULEUR_DEFAUT
 end
 
 -- Fiche détail (panneau droit)
@@ -4285,6 +6105,23 @@ end)
 local detailPortrait = detailFond:CreateTexture(nil, "ARTWORK")
 detailPortrait:SetSize(104, 104)
 detailPortrait:SetPoint("TOPLEFT", 14, -14)
+-- Encadrement metal en 4 barres (meme style que la grille) autour du portrait
+local detailPortraitCadres = {}
+do
+    local barres = {
+        { w = 110, h = 3, p1 = "TOPLEFT",     rp = detailPortrait, p2 = "TOPLEFT",     x = -3, y = 3 },
+        { w = 110, h = 3, p1 = "BOTTOMLEFT",  rp = detailPortrait, p2 = "BOTTOMLEFT",  x = -3, y = -3 },
+        { w = 3,  h = 110, p1 = "TOPLEFT",     rp = detailPortrait, p2 = "TOPLEFT",     x = -3, y = 3 },
+        { w = 3,  h = 110, p1 = "TOPRIGHT",    rp = detailPortrait, p2 = "TOPRIGHT",    x = 3,  y = 3 },
+    }
+    for _, bdef in ipairs(barres) do
+        local t = detailFond:CreateTexture(nil, "OVERLAY")
+        t:SetSize(bdef.w, bdef.h)
+        t:SetPoint(bdef.p1, bdef.rp, bdef.p2, bdef.x, bdef.y)
+        t:SetColorTexture(0.35, 0.30, 0.20, 0.9)
+        detailPortraitCadres[#detailPortraitCadres + 1] = t
+    end
+end
 -- Espace sous le portrait : niveau et statut de la bête (data file)
 local detailNiveau = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 detailNiveau:SetPoint("TOPLEFT", 16, -122)
@@ -4295,7 +6132,7 @@ detailNom:SetPoint("TOPLEFT", 124, -16)
 detailNom:SetJustifyH("LEFT")
 detailNom:SetWidth(148)
 local detailZone = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detailZone:SetPoint("TOPLEFT", 140, -56)
+detailZone:SetPoint("TOPLEFT", 140, -38)
 -- Retour à la ligne pour les longs noms de zone (ne déborde plus de l'encart)
 detailZone:SetWidth(138)
 detailZone:SetJustifyH("LEFT")
@@ -4304,27 +6141,27 @@ detailZone:SetShadowOffset(1, -1)
 -- Pastille de couleur de l'habitat (façon bouton de biome MH)
 local detailHabitatIcone = detailFond:CreateTexture(nil, "ARTWORK")
 detailHabitatIcone:SetSize(12, 12)
-detailHabitatIcone:SetPoint("TOPLEFT", 124, -57)
+detailHabitatIcone:SetPoint("TOPLEFT", 124, -37)
 detailHabitatIcone:SetColorTexture(0.5, 0.5, 0.5, 0.95)
 local detailMenace = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-detailMenace:SetPoint("TOPLEFT", 124, -84)
+detailMenace:SetPoint("TOPLEFT", 124, -70)
 -- Rangée de menace : 5 pips carrés + 5 étoiles en texture (les glyphes texte
 -- type étoile ne sont pas rendus par les polices WoW ; les textures si).
 -- Doublure : si la texture étoile manque sur un client, les pips restent visibles.
-local pipsMenace, etoilesMenace = {}, {}
+MHH_pipsMenace, MHH_etoilesMenace = {}, {} -- globales préfixées (limite 200)
 for i = 1, 5 do
     -- Ancrées sur le texte « Menace : » : alignement vertical exact,
     -- quel que soit le rendu de la police. Étoiles agrandies (16px).
     local pip = detailFond:CreateTexture(nil, "ARTWORK")
     pip:SetSize(12, 12)
     pip:SetPoint("LEFT", detailMenace, "RIGHT", 6 + (i - 1) * 16, -1)
-    pipsMenace[i] = pip
+    MHH_pipsMenace[i] = pip
     local et = detailFond:CreateTexture(nil, "OVERLAY")
     et:SetSize(16, 16)
     et:SetPoint("CENTER", pip, "CENTER")
     et:SetTexture("Interface\\Common\\FavoritesIcon")
     et:SetVertexColor(0.78, 0.62, 0.25, 0.95)
-    etoilesMenace[i] = et
+    MHH_etoilesMenace[i] = et
 end
 -- Encart « fiche d'identité » : regroupe menace / gabarit / sensibilités,
 -- façon panneau MH. Niveau passé SOUS le fond de la fiche pour rester
@@ -4346,13 +6183,13 @@ end)
 -- Sensibilités : icône + nom + NIVEAU façon MH (I à III, les glyphes
 -- étoiles ne sont pas rendus par les polices WoW). Une ligne par école.
 local detailFaiblesseLabel = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detailFaiblesseLabel:SetPoint("TOPLEFT", 124, -142)
+detailFaiblesseLabel:SetPoint("TOPLEFT", 124, -132)
 local faiblesseIcons = {}
 local faiblesseNoms = {}
 for i = 1, 3 do
     local t = detailFond:CreateTexture(nil, "ARTWORK")
     t:SetSize(12, 12)
-    t:SetPoint("TOPLEFT", 124 + (i - 1) * 74, -157)
+    t:SetPoint("TOPLEFT", 124 + (i - 1) * 74, -147)
     t:Hide()
     faiblesseIcons[i] = t
     local n = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -4363,60 +6200,101 @@ end
 -- Barre « gabarit rencontré » (façon Hunted Size MH : plage de niveaux min–max)
 -- Remontée à l'ancienne place des sensibilités : c'est l'info qu'on lit en premier.
 local detailGabaritLabel = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detailGabaritLabel:SetPoint("TOPLEFT", 124, -102)
+detailGabaritLabel:SetPoint("TOPLEFT", 124, -92)
 local detailGabaritBg = detailFond:CreateTexture(nil, "BACKGROUND")
 detailGabaritBg:SetSize(120, 8)
-detailGabaritBg:SetPoint("TOPLEFT", 124, -114)
+detailGabaritBg:SetPoint("TOPLEFT", 124, -104)
 detailGabaritBg:SetColorTexture(0.25, 0.20, 0.12, 0.9)
 local detailGabaritFill = detailFond:CreateTexture(nil, "ARTWORK")
 detailGabaritFill:SetSize(0, 8)
-detailGabaritFill:SetPoint("TOPLEFT", 124, -114)
+detailGabaritFill:SetPoint("TOPLEFT", 124, -104)
 detailGabaritFill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
 -- Légende de la jauge de gabarit : échelle des niveaux 1 -> 60
 local detailGabaritMin = detailFond:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-detailGabaritMin:SetPoint("TOPLEFT", 120, -124)
-detailGabaritMin:SetText("1")
+detailGabaritMin:SetPoint("TOPLEFT", detailGabaritBg, "BOTTOMLEFT", -2, 0)
+detailGabaritMin:SetText("0")
 local detailGabaritMax = detailFond:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-detailGabaritMax:SetPoint("TOPLEFT", 238, -124)
-detailGabaritMax:SetText("60")
+detailGabaritMax:SetPoint("TOPRIGHT", detailGabaritBg, "BOTTOMRIGHT", 0, 0)
+detailGabaritMax:SetText(L("2200 cm"))
+-- Trophée de COURONNE du gabarit (façon bounty box MH) : médaille à
+-- droite de la barre — dorée (couronne d'or) ou argentée (argent).
+-- Les mesures restent détaillées dans la colonne de stats.
+local detailCouronne = detailFond:CreateTexture(nil, "OVERLAY")
+detailCouronne:SetSize(14, 14)
+detailCouronne:SetPoint("TOPLEFT", 258, -98)
+detailCouronne:SetTexture("Interface\\Common\\ReputationStar")
+detailCouronne:Hide()
 -- Délimitation légère entre le bloc d'identité et les statistiques
 local detailTraitStats = detailFond:CreateTexture(nil, "OVERLAY")
-detailTraitStats:SetHeight(1)
+-- Séparateur AU-DESSUS de la description, volontairement bien visible
+-- (or plein, 2 px) : la note du naturaliste forme un encart net.
+detailTraitStats:SetHeight(2)
 detailTraitStats:SetWidth(256)
-detailTraitStats:SetPoint("TOPLEFT", 16, -182)
-detailTraitStats:SetColorTexture(0.62, 0.48, 0.22, 0.45)
+detailTraitStats:SetPoint("TOPLEFT", 16, -172)
+detailTraitStats:SetColorTexture(0.82, 0.64, 0.28, 0.85)
 -- Note du naturaliste (2 lignes max, texte intégral — plus de troncature
 -- brutale : on répartit les stats en 2 colonnes pour gagner la place)
 local detailNote = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detailNote:SetPoint("TOPLEFT", 16, -190)
-detailNote:SetJustifyH("LEFT")
-detailNote:SetWidth(256)
+detailNote:SetPoint("TOPLEFT", 13, -180)
+detailNote:SetJustifyH("CENTER")
+detailNote:SetWidth(262)
 detailNote:SetSpacing(3)
+-- Dernière note affichée (pour l'infobulle de survol)
+local derniereNote = nil
+-- Survol de la note : texte INTÉGRAL dans une infobulle. Les notes
+-- longues se replient sur plusieurs lignes dans la fiche — mais si
+-- une coupure saute encore aux yeux, tout reste lisible ici.
+local noteHover = CreateFrame("Frame", nil, detailFond)
+noteHover:SetPoint("TOPLEFT", 8, -176)
+noteHover:SetSize(272, 64)
+noteHover:SetScript("OnEnter", function(self)
+    if GameTooltip and derniereNote then
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+        GameTooltip:SetText(L("|cffffd100Observations du naturaliste|r"), 1, 1, 1)
+        GameTooltip:AddLine(derniereNote, 0.86, 0.78, 0.65, true)
+        GameTooltip:Show()
+    end
+end)
+noteHover:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 -- Stats de chasse : 2 colonnes gauche/droite (au lieu d'une pile haute
 -- qui débordait sur les boutons quand la note était longue)
+-- Séparateur SOUS la description (symétrique du trait du haut) :
+-- la note est encadrée, la zone de stats démarre proprement.
+local detailTraitNoteBas = detailFond:CreateTexture(nil, "OVERLAY")
+detailTraitNoteBas:SetHeight(2)
+detailTraitNoteBas:SetWidth(256)
+detailTraitNoteBas:SetPoint("TOPLEFT", 16, -218)
+detailTraitNoteBas:SetColorTexture(0.82, 0.64, 0.28, 0.85)
 local detailStatsG = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detailStatsG:SetPoint("TOPLEFT", 16, -222)
+detailStatsG:SetPoint("TOPLEFT", 16, -230)
 detailStatsG:SetJustifyH("LEFT")
 detailStatsG:SetWidth(128)
 detailStatsG:SetSpacing(4)
 local detailStatsD = detailFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detailStatsD:SetPoint("TOPLEFT", 150, -222)
+detailStatsD:SetPoint("TOPLEFT", 150, -230)
 detailStatsD:SetJustifyH("LEFT")
 detailStatsD:SetWidth(126)
 detailStatsD:SetSpacing(4)
 -- Bouton de contrat : texte mis à jour par RaffraichirDetail (définie juste après)
 local MettreAJourBoutonContrat = function() end
+-- Bouton favori : idem (défini après boutonCarte, appelé par RaffraichirDetail)
+local MettreAJourBoutonFavori = function() end
 
 local function EtoilesMenace(nom, info)
     -- Menace simple : 1 à 5. Jamais chassée ? L'estimation du data file
     -- (NIVEAUX) sert en attendant la première prise. Une rare ÉLITE
     -- gagne une étoile : le dragon doré du client se lit dans le carnet.
     local niv = (info and info.nivMax) or MHH_NIVEAUX[nom] or 0
-    local nivJoueur = UnitLevel("player")
+    -- Menace ABSOLUE (dangerosité de la bête, pas du chasseur) : un
+    -- joueur bas niveau voyait TOUT à 4-5 étoiles — illisible. Paliers
+    -- sur l'échelle 1-60 ; l'élite gagne une étoile ; 5 = élite de haut
+    -- niveau uniquement (le satyre de Gangrebois retombe à 4).
     local base = 1
-    if niv > 0 then base = (niv >= nivJoueur + 5) and 5 or (niv >= nivJoueur) and 4 or (niv >= nivJoueur - 5) and 3 or 2 end
-    if MHH_ELITES[nom] then base = math.min(5, base + 1) end
-    return base
+    if niv >= 45 then base = 4
+    elseif niv >= 30 then base = 3
+    elseif niv > 0 then base = 2 end
+    if MHH_ELITES[nom] then base = base + 1 end
+    return math.min(base, MHH_ELITES[nom] and 5 or 4)
 end
 
 local function RaffraichirDetail()
@@ -4433,8 +6311,8 @@ local function RaffraichirDetail()
         detailZone:SetText("")
         detailMenace:SetText("")
         for i = 1, 5 do
-            pipsMenace[i]:Hide()
-            etoilesMenace[i]:Hide()
+            MHH_pipsMenace[i]:Hide()
+            MHH_etoilesMenace[i]:Hide()
         end
         detailPortrait:SetTexture(nil)
         return
@@ -4443,8 +6321,54 @@ local function RaffraichirDetail()
     local zone = MHH_CATALOGUE[mobSelectionne] or (DB.decouverts[mobSelectionne] and DB.decouverts[mobSelectionne].zone) or "?"
     -- Statut sous le portrait : le niveau vit dans le gabarit (estimation
     -- ou observé) — ici, seulement le statut quand le data le connaît
-    detailNiveau:SetText(MHH_ELITES[mobSelectionne] and "|cffff6a6aÉlite rare|r" or "")
-    detailNom:SetText((DB.contrat == mobSelectionne and "|cffff69b4» |r" or "") .. "|cffffd100" .. mobSelectionne .. "|r")
+    -- Une seule ligne claire : le niveau OBSERVÉ prime (vérité du terrain),
+    -- sinon l'estimation du data file. L'élite s'ajoute derrière.
+    local nivData = MHH_NIVEAUX[mobSelectionne]
+    local statutNiv = ""
+    if info.nivMin and info.nivMax then
+        statutNiv = "|cffa58b54Niveau " .. info.nivMin
+            .. (info.nivMin ~= info.nivMax and ("–" .. info.nivMax) or "")
+            .. " observé|r"
+    elseif nivData then
+        statutNiv = "|cffa58b54Niveau " .. nivData .. "|r"
+    end
+    -- v0.120 : niveau de rareté toujours affiché — « Rare » doré pour
+    -- tout le gibier, « Élite rare » rouge pour les élites (avant, les
+    -- rares simples n'avaient aucune étiquette de rareté)
+    if MHH_ELITES[mobSelectionne] then
+        if statutNiv ~= "" then statutNiv = statutNiv .. "\n" end
+        statutNiv = statutNiv .. "|cffff6a6aÉlite rare|r"
+    else
+        if statutNiv ~= "" then statutNiv = statutNiv .. "\n" end
+        statutNiv = statutNiv .. "|cffffd100" .. L("Rare") .. "|r"
+    end
+    -- Mention CAPTURABLE (v0.64) : le spécimen rejoint l'enclos s'il est
+    -- tué pendant une chasse — repère vert sous le portrait (retour
+    -- utilisateur : rien ne le distinguait dans le gibier)
+    local cleSpecFiche = (MHH_SpecimenDe and MHH_SpecimenDe(mobSelectionne))
+    if cleSpecFiche then
+        if statutNiv ~= "" then statutNiv = statutNiv .. "\n" end
+        -- v0.119 : la mention devient DYNAMIQUE — elle dit ce qu'on a
+        -- réellement (les libellés « Spécimen en enclos » existaient dans
+        -- la traduction depuis la v0.64 mais n'étaient jamais affichés).
+        -- v0.121 : résolu par clé canonique (graphies serveur incluses).
+        if DB.menagerie and DB.menagerie[cleSpecFiche] then
+            statutNiv = statutNiv .. "|cffa0ff50Capturé|r"
+        else
+            statutNiv = statutNiv .. "|cff88e48aCapturable|r"
+        end
+    end
+    detailNiveau:SetText(statutNiv)
+    detailNom:SetText((DB.contrat == mobSelectionne and "|cffff69b4» |r" or "") .. "|cffffd100" .. MHH_NomAffiche(mobSelectionne) .. "|r")
+    -- Titre survolable : s'il est tronqué, le tooltip montre le nom entier
+    detailNom.nomComplet = MHH_NomAffiche(mobSelectionne)
+    detailNom:SetScript("OnEnter", function(self)
+        if not GameTooltip or not self.nomComplet then return end
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+        GameTooltip:SetText("|cffffd100" .. self.nomComplet .. "|r")
+        GameTooltip:Show()
+    end)
+    detailNom:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     -- Noms très longs (« Maître des esclaves cœur-noir »…) : police
     -- rétrogradée puis tronquée — jamais de débordement sur la fiche
     pcall(function()
@@ -4452,7 +6376,7 @@ local function RaffraichirDetail()
         if detailNom:GetStringWidth() > 148 then
             detailNom:SetFontObject("GameFontNormal")
         end
-        local nomz = mobSelectionne
+        local nomz = MHH_NomAffiche(mobSelectionne)
         while detailNom:GetStringWidth() > 148 and #nomz > 6 do
             nomz = string.sub(nomz, 1, #nomz - 1)
             detailNom:SetText((DB.contrat == mobSelectionne and "|cffff69b4» |r" or "")
@@ -4460,15 +6384,23 @@ local function RaffraichirDetail()
         end
     end)
     -- Habitat : coordonnées de spawn si le data file en fournit
+    -- Coordonnées : le spawn du data file si on l'a, SINON la position du
+    -- repérage en jeu (là où la bête a été croisée/tuée) — la piste
+    -- n'est plus laissée vide après une première rencontre.
     local coords = MHH_COORDS[mobSelectionne]
+    local repere = (not coords) and DB.reperees and DB.reperees[mobSelectionne]
     if coords then
         detailZone:SetText(L("Habitat : ") .. zone
-            .. " |cffc9a24a(≈ " .. coords[1] .. ", " .. coords[2] .. ")|r")
+            .. " |cffc9a24a(" .. coords[1] .. ", " .. coords[2] .. ")|r")
+    elseif repere and repere.x and repere.y and repere.x > 0 and repere.y > 0 then
+        detailZone:SetText(L("Habitat : ") .. zone
+            .. " |cffc9a24a(" .. math.floor(repere.x * 100 + 0.5)
+            .. ", " .. math.floor(repere.y * 100 + 0.5) .. ")|r")
     else
         detailZone:SetText(L("Habitat : ") .. zone)
     end
     -- Couleur de l'habitat
-    local cHabitat = ZONE_COULEURS[zone] or COULEUR_DEFAUT
+    local cHabitat = CouleurZone(zone)
     detailHabitatIcone:SetColorTexture(cHabitat[1], cHabitat[2], cHabitat[3], 0.95)
     -- Menace : étoiles seules, le score numérique est dans le décompte des pips
     detailMenace:SetText("|cffc9a24aMenace :|r")
@@ -4476,13 +6408,13 @@ local function RaffraichirDetail()
         -- Façon MH : seules les étoiles GAGNÉES s'affichent — les non
         -- acquises sont masquées, comme sur les menus de Monster Hunter
         if i <= EtoilesMenace(mobSelectionne, info) then
-            pipsMenace[i]:Show()
-            pipsMenace[i]:SetColorTexture(0.35, 0.30, 0.22, 0.85)
-            etoilesMenace[i]:Show()
-            etoilesMenace[i]:SetVertexColor(0.95, 0.78, 0.25, 1.0)
+            MHH_pipsMenace[i]:Show()
+            MHH_pipsMenace[i]:SetColorTexture(0.35, 0.30, 0.22, 0.85)
+            MHH_etoilesMenace[i]:Show()
+            MHH_etoilesMenace[i]:SetVertexColor(0.95, 0.78, 0.25, 1.0)
         else
-            pipsMenace[i]:Hide()
-            etoilesMenace[i]:Hide()
+            MHH_pipsMenace[i]:Hide()
+            MHH_etoilesMenace[i]:Hide()
         end
     end
     -- Sensibilités : icône + nom + niveau (I à III), une ligne par école
@@ -4504,57 +6436,93 @@ local function RaffraichirDetail()
     else
         detailFaiblesseLabel:SetText(L("|cffc9a24aSensibilités :|r inconnues"))
     end
-    -- Gabarit : plage de niveaux rencontrés sur une barre (min/max, comme MH).
-    -- Jamais pris ? Le data file donne l'ESTIMATION de la taille : marqueur
-    -- discret sur la jauge, qui laisse la place à la plage réelle dès la
-    -- première prise. Pas de doublon avec le niveau sous le portrait.
-    local nivEstime = MHH_NIVEAUX[mobSelectionne]
-    if info.nivMin and info.nivMax then
-        -- Une seule prise : « niv 18 » plutôt que « niv 18–18 »
-        if info.nivMin == info.nivMax then
-            detailGabaritLabel:SetText(L("Gabarit : niv ") .. info.nivMin)
+    -- Gabarit : barre RELATIVE au spécimen. L'ancienne échelle fixe
+    -- (0 → 2200 cm, calibrée pour une « taille » de hitbox à 12 unités)
+    -- laissait tout gibier réel (~0,5–2 unités) à ~5% de remplissage :
+    -- une barre morte. Désormais : la barre couvre la plage PLAUSIBLE de
+    -- CE spécimen (de la plus petite prise ×0,85 au record ×1,30 — soit
+    -- exactement les bornes du facteur de taille du gabarit), et le
+    -- remplissage marque la DERNIÈRE prise dans cette plage. Elle vit au
+    -- fil des chasses, et l'échelle dépend de la bête (un lapin et un
+    -- dragon n'ont pas la même barre).
+    local tailleAff = info.taille or info.tailleRecord
+    if tailleAff then
+        -- Taille MESUREE : envergure approximative en CENTIMETRES
+        -- (flaveur MH : ~2 rayons de hitbox, 1 yard = 91,44 cm)
+        local cmA = (GabaritEnCm and GabaritEnCm(tailleAff)) or "?"
+        detailGabaritLabel:SetText(L("Gabarit : ~") .. cmA .. L(" cm"))
+        local tMin, tMax
+        if info.rayonBase and info.rayonBase > 0 then
+            -- v0.24 : échelle EXACTE du spécimen — de base×0,85 à
+            -- base×1,30, les vraies bornes du facteur : le remplissage
+            -- correspond au facteur de la prise (argent ≈ 78 %, or ≈ 93 %).
+            tMin = info.rayonBase * 0.85
+            tMax = info.rayonBase * 1.30
         else
-            detailGabaritLabel:SetText(L("Gabarit : niv ") .. info.nivMin .. "–" .. info.nivMax)
+            -- Anciennes prises (sans base mémorisée) : repli sur
+            -- l'heuristic précédente.
+            tMin = (info.tailleMin or tailleAff) * 0.85
+            tMax = (info.tailleRecord or tailleAff) * 1.30
         end
-        local x1 = 124 + 120 * (info.nivMin / 60)
-        local x2 = 124 + 120 * (info.nivMax / 60)
+        -- Position de la dernière prise dans la plage PLAUSIBLE :
+        -- le facteur aléatoire du gabarit va de 0,85 à 1,30 — la barre
+        -- couvre donc toute la taille possible du spécimen, et la
+        -- couronne d'or correspond au bout droit de la barre (~97%).
+        -- Une prise unique tombe vers le tiers ; chaque nouvelle prise
+        -- déplace le remplissage, et l'échelle « joue » d'un mob à
+        -- l'autre (le pied de l'échelle dépend de la bête).
+        local frac = (tailleAff - tMin) / math.max(1e-6, tMax - tMin)
+        local cmMin = (GabaritEnCm and GabaritEnCm(tMin)) or "?"
+        local cmMax = (GabaritEnCm and GabaritEnCm(tMax)) or "?"
+        local x2 = 124 + 120 * math.min(1, math.max(0, frac))
+        detailGabaritLabel:Show()
+        detailGabaritBg:Show()
+        detailGabaritMin:Show()
+        detailGabaritMin:SetText(cmMin .. L(" cm"))
+        detailGabaritMax:SetText(cmMax .. L(" cm"))
+        detailGabaritMax:Show()
+        detailGabaritFill:Show()
         detailGabaritFill:ClearAllPoints()
-        detailGabaritFill:SetPoint("TOPLEFT", x1, -114)
-        detailGabaritFill:SetSize(math.max(6, x2 - x1), 8)
-        detailGabaritFill:SetColorTexture(0.78, 0.62, 0.25, 0.95) -- observé : or
-    elseif nivEstime then
-        detailGabaritLabel:SetText(L("Gabarit : ~niv ") .. nivEstime .. L(" (estimation)"))
-        local xm = 124 + 120 * (nivEstime / 60) - 3
-        detailGabaritFill:ClearAllPoints()
-        detailGabaritFill:SetPoint("TOPLEFT", xm, -114)
-        detailGabaritFill:SetSize(6, 8)
-        detailGabaritFill:SetColorTexture(0.55, 0.48, 0.35, 0.75) -- estimé : discret
+        detailGabaritFill:SetPoint("TOPLEFT", 124, -104)
+        detailGabaritFill:SetSize(math.max(6, x2 - 124), 8)
+        detailGabaritFill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
     else
-        detailGabaritLabel:SetText(L("Gabarit : inconnu"))
-        detailGabaritFill:ClearAllPoints()
-        detailGabaritFill:SetPoint("TOPLEFT", 124, -114)
-        detailGabaritFill:SetSize(0, 8)
+        -- Jamais mesuré : la barre RESTE (stable d'un mob a l'autre),
+        -- grisée, "??" en guise de mesure — le carnet attend la prise.
+        detailGabaritLabel:SetText("|cffa58b54Gabarit : pas encore mesuré|r")
+        detailGabaritLabel:Show()
+        detailGabaritBg:Show()
+        detailGabaritFill:Hide()
+        detailGabaritMin:Show()
+        detailGabaritMin:SetText("?")
+        detailGabaritMax:SetText("|cffa58b54?? cm|r")
+        detailGabaritMax:Show()
     end
     -- Observations du naturaliste (2 lignes max, texte intégral), puis
     -- stats réparties en 2 colonnes : plus rien ne déborde sur les boutons.
+    -- Description du naturaliste : elle ne se lit QUE sur une bête
+    -- CONNUE (croisée en jeu ou déjà prise) — l'inconnue reste une
+    -- énigme du carnet, façon MH. Le texte vient du bestiaire rédigé à
+    -- la main, sinon du générateur (famille + zone), stable au relog.
     local note = MHH_NOTES[mobSelectionne]
-    if not note and info.premiere then
-        -- Bête hors bestiaire rédigé : note générée depuis le profil de
-        -- chasse. Le ton évolue avec le nombre de prises — une bête tuée
-        -- souvent n'est plus « mal connue ».
-        local nb = info.kills or 0
-        if nb >= 5 then
-            note = L("Vieille connaissance du carnet — ") .. nb
-                .. L(" prises, et toujours des restes à gratter.")
-        elseif nb >= 2 then
-            note = L("Ce spécimen commence à être bien connu : ") .. nb
-                .. L(" prises au compteur.")
-        else
+    local nb = info.kills or 0
+    local connu = (DB.decouverts and DB.decouverts[mobSelectionne]) or nb > 0
+    if not connu then
+        if info.premiere then
             note = L("Spécimen encore mal connu du carnet. Première prise : ") .. info.premiere .. "."
+        else
+            note = L("Spécimen encore mal connu du carnet.")
         end
+    elseif not note then
+        note = MHH_NoteGeneree(mobSelectionne)
     end
     note = note or L("Observations en cours.")
-    if #note > 110 then note = note:sub(1, 107) .. "..." end
+    -- Plus de troncature à 110 caractères : la note complète s'affiche
+    -- (le bas de la fiche s'adapte à sa hauteur réelle) et le survol
+    -- donne de toute façon le texte intégral. L'ancienne coupe
+    -- tombait parfois AU MILIEU d'un code couleur |cff……. : la suite
+    -- du texte passait dans la couleur de la météo.
+    derniereNote = note
     -- Note du ciel : saveur météo SI le joueur est dans l'habitat du
     -- gibier (sinon on afficherait la météo d'ailleurs — fausse piste)
     local nomMeteoFiche = MeteoActuelle()
@@ -4567,30 +6535,57 @@ local function RaffraichirDetail()
         note = note .. "\n|cff7fb2ff" .. saveursCiel[math.random(#saveursCiel)] .. "|r"
     end
     detailNote:SetText("|cff8a6d3b« " .. note .. " »|r")
-    detailStatsG:SetText(
-        L("Chasses : |cffffd100") .. (info.kills or 0) .. "|r\n"
+    -- Le satyre ecrivait 3 lignes : le separateur bas et les stats
+    -- descendent dynamiquement selon la hauteur REELLE de la note.
+    pcall(function()
+        local hN = detailNote:GetStringHeight() or 30
+        -- Équidistance : le texte flotte au centre de son encart,
+        -- même espace (8 px) entre lui et chaque délimiteur.
+        local yBas = -180 - hN - 8
+        detailTraitNoteBas:SetPoint("TOPLEFT", 16, yBas)
+        detailStatsG:SetPoint("TOPLEFT", 16, yBas - 12)
+        detailStatsD:SetPoint("TOPLEFT", 150, yBas - 12)
+    end)
+    local colG = L("Chasses : |cffffd100") .. (info.kills or 0) .. "|r\n"
         .. L("Première : ") .. (info.premiere or "?") .. "\n"
-        .. L("Dernière : ") .. (info.derniere or "?"))
-    local colD = L("Sans mourir : ") .. (info.sansMourir or 0) .. "/" .. (info.kills or 0)
+        .. L("Dernière : ") .. (info.derniere or "?")
+    detailStatsG:SetText(colG)
+    local colD = L("Sans égratignure : ") .. (info.sansMourir or 0) .. "/" .. (info.kills or 0)
     if info.recordMin then
         colD = colD .. "\nRecord : |cffffd100" .. math.floor(info.recordMin / 60)
             .. " min " .. (info.recordMin % 60) .. " s|r"
     end
-    -- Gabarit mesuré : dernière taille + couronne (record trophée en fiche)
-    if info.taille then
-        colD = colD .. "\n" .. L("Gabarit : |cffffff00") .. info.taille .. L(" unités|r")
-        if info.tailleRecord then
-            colD = colD .. L("  |cffa58b54(★ |cffffd100") .. info.tailleRecord .. "|r)"
-        end
+    -- Gabarit en stats : UNE ligne courte. « max » = le record connu
+    -- (dernier gabarit s'il n'y a pas encore de record), en centimètres.
+    -- La couronne se lit inline — la médaille graphique reste près de la
+    -- barre de gabarit (haut droit de la fiche).
+    if info.taille or info.tailleRecord then
+        local tMax = info.tailleRecord or info.taille
+        local cmMax = (GabaritEnCm and GabaritEnCm(tMax)) or "?"
+        colD = colD .. "\n" .. L("Gabarit max : |cffffff00") .. cmMax .. L(" cm|r")
         if info.couronne == "or" then
-            colD = colD .. L("\n|cffffcc44★ Couronne d'or du gabarit !|r")
+            colD = colD .. L("  |cffffcc44(couronne d'or !)|r")
         elseif info.couronne == "argent" then
-            colD = colD .. L("\n|cffc0c0c0★ Couronne d'argent du gabarit|r")
+            colD = colD .. L("  |cffc0c0c0(couronne d'argent)|r")
         end
+    else
+        colD = colD .. "\n" .. L("|cffa58b54Gabarit max : ?? cm|r")
+    end
+    -- Médaille : or = couronne d'or, argentée = couronne d'argent
+    if info.couronne == "or" then
+        detailCouronne:Show()
+        detailCouronne:SetVertexColor(1, 0.85, 0.35, 1)
+    elseif info.couronne == "argent" then
+        detailCouronne:Show()
+        detailCouronne:SetVertexColor(0.72, 0.72, 0.80, 1)
+    else
+        detailCouronne:Hide()
     end
     detailStatsD:SetText(colD)
     -- Portrait : 3D si le mob est ciblé, sinon silhouette
-    local nomCible = UnitName("target") or ""
+    -- v0.30 : nom secret (poison client) → les == ne risquent rien, mais
+    -- on blinde pour éviter toute surprise de ce client capricieux
+    local nomCible = NomOrdinaire(UnitName("target")) or ""
     if nomCible == mobSelectionne then
         DefinirPortrait(detailPortrait, "target")
     else
@@ -4606,11 +6601,43 @@ local function RaffraichirDetail()
                 detailPortrait:SetTexture("Interface\\Icons\\INV_Misc_MonsterClaw_04")
             end
         end
-        -- Silhouette grise seulement pour une bête JAMAIS prise ; une
-        -- bête chassée (kills >= 1) a droit à son portrait en couleur.
-        detailPortrait:SetDesaturated((info.kills or 0) == 0)
+        -- Portrait en couleur dès la RENCONTRE (découverte au ciblage
+        -- ou bête déjà chassée) ; les JAMAIS rencontrés montrent la
+        -- vignette MYSTÈRE (inconnu.tga) — comme dans la grille.
+        local vuMob = (DB.decouverts and DB.decouverts[mobSelectionne]) or (info.kills and info.kills > 0)
+        for _, t in ipairs(detailPortraitCadres) do
+            if info.kills and info.kills > 0 then
+                t:SetColorTexture(0.78, 0.62, 0.25, 0.95)
+            else
+                t:SetColorTexture(0.35, 0.30, 0.20, 0.9)
+            end
+        end
+        if not vuMob then
+            local okMyst = true
+            pcall(function()
+                local ok = detailPortrait:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Specimens\\inconnu.tga")
+                if ok == false then
+                    ok = detailPortrait:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Vignettes\\inconnu.tga")
+                end
+                if ok == false then okMyst = false end
+            end)
+            if okMyst then
+                detailPortrait:SetTexCoord(0, 1, 0, 1)
+                detailPortrait:SetDesaturated(false)
+                detailPortrait:SetVertexColor(0.72, 0.72, 0.72)
+            else
+                detailPortrait:SetTexCoord(0, 1, 0, 1)
+                detailPortrait:SetVertexColor(1, 1, 1)
+                detailPortrait:SetDesaturated(true)
+            end
+        else
+            detailPortrait:SetTexCoord(0, 1, 0, 1)
+            detailPortrait:SetVertexColor(1, 1, 1)
+            detailPortrait:SetDesaturated(false)
+        end
     end
     MettreAJourBoutonContrat()
+    MettreAJourBoutonFavori()
 end
 
 -- Les contrats se prennent désormais UNIQUEMENT dans la fenêtre
@@ -4637,7 +6664,7 @@ MettreAJourBoutonContrat = function()
 end
 -- Voir sur la carte : ouvre la carte de l'habitat du monstre affiché
 boutonCarte = CreateFrame("Button", nil, detailFond, MHH_TEMPLATE_BACKDROP)
-boutonCarte:SetPoint("BOTTOMLEFT", 12, 10)
+boutonCarte:SetPoint("BOTTOMLEFT", 28, 10)
 boutonCarte:SetSize(128, 22)
 pcall(function()
     boutonCarte:SetBackdrop({
@@ -4660,6 +6687,72 @@ boutonCarte:SetScript("OnClick", function()
     local zoneCarte = MHH_CATALOGUE[mobSelectionne] or (DB.decouverts[mobSelectionne] and DB.decouverts[mobSelectionne].zone) or "?"
     VoirSurCarte(zoneCarte, mobSelectionne)
 end)
+
+-- FAVORI : épingle la bête affichée — elle apparaît dans la catégorie
+-- « ★ Favoris » en tête de la liste du gibier, EN PLUS de sa région.
+local boutonFavori, boutonFavoriTxt, boutonFavoriStar
+MettreAJourBoutonFavori = function()
+    if not boutonFavoriTxt then return end
+    -- NB : les glyphes ★/☆ n'existent pas dans la police du client (ils
+    -- s'affichaient en crochets vides []) — l'étoile est une TEXTURE.
+    -- Deux états LISIBLES, même taille de bouton :
+    --  • pas favori : étoile or + texte blanc — clairement cliquable
+    --  • favori     : CROIX ROUGE + texte doré — le clic le retire
+    if mobSelectionne and DB.favoris and DB.favoris[mobSelectionne] then
+        if boutonFavoriStar then
+            boutonFavoriStar:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_7")
+            boutonFavoriStar:SetAlpha(1)
+        end
+        boutonFavoriTxt:SetText("|cffffd100Favori|r")
+    else
+        if boutonFavoriStar then
+            boutonFavoriStar:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+            boutonFavoriStar:SetAlpha(1)
+        end
+        boutonFavoriTxt:SetText("|cffffffffFavori|r")
+    end
+end
+boutonFavori = CreateFrame("Button", nil, detailFond, MHH_TEMPLATE_BACKDROP)
+boutonFavori:SetPoint("BOTTOMLEFT", 164, 10)
+boutonFavori:SetSize(96, 22)
+pcall(function()
+    boutonFavori:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    boutonFavori:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
+    boutonFavori:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
+end)
+boutonFavoriStar = boutonFavori:CreateTexture(nil, "OVERLAY")
+boutonFavoriStar:SetSize(14, 14)
+-- (ancre étoile définie après la création du texte, voir plus bas)
+boutonFavoriStar:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+boutonFavoriStar:SetAlpha(0.35)
+boutonFavoriTxt = boutonFavori:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+boutonFavoriTxt:SetPoint("CENTER", 9, 0)
+-- L'étoile se colle à gauche du texte : « ★ Favori » centré en groupe
+boutonFavoriStar:SetPoint("RIGHT", boutonFavoriTxt, "LEFT", -4, 0)
+boutonFavoriTxt:SetTextColor(1, 1, 1)
+boutonFavoriTxt:SetShadowColor(0, 0, 0, 1)
+boutonFavoriTxt:SetShadowOffset(1, -1)
+boutonFavori:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+boutonFavori:SetScript("OnClick", function()
+    if not mobSelectionne then return end
+    DB.favoris = DB.favoris or {}
+    if DB.favoris[mobSelectionne] then
+        DB.favoris[mobSelectionne] = nil
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r ") .. mobSelectionne .. L("|r retiré des favoris."))
+    else
+        DB.favoris[mobSelectionne] = true
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r ") .. mobSelectionne .. L("|r épinglé en favori."))
+    end
+    MettreAJourBoutonFavori()
+    if RaffraichirCarnet then RaffraichirCarnet() end
+end)
+-- Pas de tooltip de survol : l'état du bouton (étoile/croix) est
+-- assez explicite comme ça, le message de chat confirme l'action.
 
 -- Ordre des régions : Kalimdor puis Royaumes de l'Est (les zones de chasse
 -- sont regroupées sous en-têtes de continent + de zone)
@@ -4684,10 +6777,10 @@ local CONTINENT = {
     ["Montagnes d'Alterac"] = L("Royaumes de l'Est"),
     ["Hautes-terres d'Arathi"] = L("Royaumes de l'Est"),
     ["Vallée de Strangleronce"] = L("Royaumes de l'Est"),
-    ["Marais des chagrins"] = L("Royaumes de l'Est"),
+    ["Marais des Chagrins"] = L("Royaumes de l'Est"),
     ["Terres ingrates"] = L("Royaumes de l'Est"),
     ["Gorge des Vents brûlants"] = L("Royaumes de l'Est"),
-    ["Steppes ardentes"] = L("Royaumes de l'Est"),
+    ["Steppes Ardentes"] = L("Royaumes de l'Est"),
     ["Terres foudroyées"] = L("Royaumes de l'Est"),
     ["Maleterres de l'Ouest"] = L("Royaumes de l'Est"),
     ["Maleterres de l'Est"] = L("Royaumes de l'Est"),
@@ -4704,8 +6797,8 @@ local ORDRE_ZONES = {
     "Marches de l'Ouest", "Les Carmines", "Bois de la Pénombre",
     "Forêt des Pins-Argentés", "Les Paluns", "Contreforts de Hautebrande",
     "Montagnes d'Alterac", "Hautes-terres d'Arathi", "Vallée de Strangleronce",
-    "Marais des chagrins", "Terres ingrates", "Gorge des Vents brûlants",
-    "Steppes ardentes", "Terres foudroyées", "Maleterres de l'Ouest",
+    "Marais des Chagrins", "Terres ingrates", "Gorge des Vents brûlants",
+    "Steppes Ardentes", "Terres foudroyées", "Maleterres de l'Ouest",
     "Maleterres de l'Est", "Les Hinterlands",
 }
 local enTetesZone = {}
@@ -4748,6 +6841,18 @@ local function RaffraichirGrille()
         parZone = tmp
     end
     messageZoneVide:SetShown(filtreMaZone and not next(parZone))
+    -- FAVORIS : pseudo-catégorie « Favoris » — les bêtes épinglées y
+    -- figurent EN PLUS de leur région d'origine (aucune perte d'info).
+    local favListe = {}
+    for _, liste in pairs(parZone) do
+        for _, nom in ipairs(liste) do
+            if DB.favoris and DB.favoris[nom] then favListe[#favListe + 1] = nom end
+        end
+    end
+    if #favListe > 0 then
+        table.sort(favListe)
+        parZone["Favoris"] = favListe
+    end
     local zones = {}
     for z in pairs(parZone) do zones[#zones + 1] = z end
     -- Le continent où se trouve le joueur passe en premier. La table
@@ -4775,6 +6880,9 @@ local function RaffraichirGrille()
         end)
     end
     table.sort(zones, function(a, b)
+        -- « Favoris » passe toujours en tête de liste
+        if a == "Favoris" then return true end
+        if b == "Favoris" then return false end
         local ca, cb = CONTINENT[a], CONTINENT[b]
         local prioA = (ca == continentJoueur) and 0 or 1
         local prioB = (cb == continentJoueur) and 0 or 1
@@ -4796,7 +6904,7 @@ local function RaffraichirGrille()
         mobSelectionne = premier
     end
 
-    local nomCible = UnitName("target") or ""
+    local nomCible = NomOrdinaire(UnitName("target")) or "" -- v0.30 : anti-secret
     local y = 10 -- petit respiration sous la barre de filtres
     local col = 0
     local ib = 0
@@ -4842,12 +6950,12 @@ local function RaffraichirGrille()
             entete.pastille = entete:CreateTexture(nil, "OVERLAY")
             entete.pastille:SetSize(11, 11)
             entete.pastille:SetPoint("TOPLEFT", 3, -5)
-            entete.texte = entete:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+            entete.texte = entete:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
             entete.texte:SetPoint("TOPLEFT", 20, -3)
             -- Estimation « rares non répertoriées » : petite police, calée
             -- à droite — plus de débordement hors de l'en-tête
             entete.estim = entete:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            entete.estim:SetPoint("TOPRIGHT", -20, -5)
+            entete.estim:SetPoint("TOPRIGHT", -8, -5)
             -- Délimitation sous chaque en-tête de zone
             entete.trait = entete:CreateTexture(nil, "OVERLAY")
             entete.trait:SetHeight(2)
@@ -4859,26 +6967,36 @@ local function RaffraichirGrille()
         entete:ClearAllPoints()
         entete:SetPoint("TOPLEFT", grilleContenu, "TOPLEFT", 4, -y)
         entete.pastille:SetColorTexture(CouleurZone(z)[1], CouleurZone(z)[2], CouleurZone(z)[3], 0.95)
-        -- Noms de zone longs (« Contreforts de Hautebrande »…) : on repart
-        -- de la grande police, on mesure, puis on rétrograde / tronque
-        -- pour ne JAMAIS chevaucher le décompte X/Y calé à droite
+        -- Décompte X/Y d'abord : on mesure SA largeur pour borner le nom
+        -- de zone AVANT lui — jamais de chevauchement, même pour
+        -- « Marécage d'Aprefange » (police réduite + troncature « … »)
+        local total = #parZone[z] + (MHH_RARES_ESTIMES[z] or 0)
+        local ratioTxt = total > 0 and ("|cffa58b54" .. #parZone[z] .. "/" .. total .. "|r") or ""
+        entete.estim:SetText(ratioTxt)
         pcall(function()
             entete.texte:SetFontObject("GameFontNormalLarge")
             local nomz = z
-            local maxW = 176 -- 240 - 20 (pastille) - 44 (ratio à droite)
-            entete.texte:SetText("|cffffd100" .. nomz .. "|r")
+            local coupure = false
+            local estimW = 0
+            if ratioTxt ~= "" then
+                estimW = entete.estim:GetStringWidth() or 0
+            end
+            if estimW <= 0 then estimW = 46 end
+            -- Le nom s'arrête juste AVANT le ratio, marge de 12 px
+            local maxW = 220 - 20 - estimW - 12
+            local function majTexte()
+                entete.texte:SetText("|cffffd100" .. nomz .. (coupure and "…|r" or "|r"))
+            end
+            majTexte()
             if entete.texte:GetStringWidth() > maxW then
                 entete.texte:SetFontObject("GameFontNormal")
                 while entete.texte:GetStringWidth() > maxW and #nomz > 6 do
                     nomz = string.sub(nomz, 1, #nomz - 1)
-                    entete.texte:SetText("|cffffd100" .. nomz .. "…|r")
+                    coupure = true
+                    majTexte()
                 end
             end
         end)
-        -- Ratio ultra-compact « fiches/total » : juste les chiffres —
-        -- les noms de zone longs (Hautes-terres d'Arathi…) ne le touchent plus
-        local total = #parZone[z] + (MHH_RARES_ESTIMES[z] or 0)
-        entete.estim:SetText(total > 0 and ("|cffa58b54" .. #parZone[z] .. "/" .. total .. "|r") or "")
         entete:Show()
         y = y + 26
         col = 0
@@ -4893,9 +7011,25 @@ local function RaffraichirGrille()
                 bouton.icone = bouton:CreateTexture(nil, "ARTWORK")
                 bouton.icone:SetSize(40, 40)
                 bouton.icone:SetPoint("TOP", 0, -2)
-                bouton.cadre = bouton:CreateTexture(nil, "OVERLAY")
-                bouton.cadre:SetSize(44, 44)
-                bouton.cadre:SetPoint("TOP", 0, 0)
+                -- Encadrement FIN en 4 barres autour de l'icône : le
+                -- carré plein 44x44 en OVERLAY recouvrait la vignette
+                -- (rendu sombre au lieu du doré attendu).
+                bouton.cadres = {}
+                do
+                    local barres = {
+                        { w = 46, h = 3, p1 = "TOPLEFT",     rp = bouton.icone, p2 = "TOPLEFT",     x = -3, y = 3 },
+                        { w = 46, h = 3, p1 = "BOTTOMLEFT",  rp = bouton.icone, p2 = "BOTTOMLEFT",  x = -3, y = -3 },
+                        { w = 3,  h = 46, p1 = "TOPLEFT",     rp = bouton.icone, p2 = "TOPLEFT",     x = -3, y = 3 },
+                        { w = 3,  h = 46, p1 = "TOPRIGHT",    rp = bouton.icone, p2 = "TOPRIGHT",    x = 3,  y = 3 },
+                    }
+                    for _, bdef in ipairs(barres) do
+                        local t = bouton:CreateTexture(nil, "OVERLAY")
+                        t:SetSize(bdef.w, bdef.h)
+                        t:SetPoint(bdef.p1, bdef.rp, bdef.p2, bdef.x, bdef.y)
+                        t:SetColorTexture(0.35, 0.30, 0.20, 0.9)
+                        bouton.cadres[#bouton.cadres + 1] = t
+                    end
+                end
                 bouton.pastille = bouton:CreateTexture(nil, "OVERLAY")
                 bouton.pastille:SetSize(10, 10)
                 bouton.pastille:SetPoint("TOPRIGHT", -6, -6)
@@ -4910,12 +7044,48 @@ local function RaffraichirGrille()
                     mobSelectionne = self.nomMob
                     RaffraichirDetail()
                 end)
+                -- Noms longs (« Prophète du mal Course-Sage ») : le libellé
+                -- de la cellule est tronqué par sa largeur — le tooltip
+                -- montre le nom ENTIER. v0.21 : la zone de déclenchement
+                -- était TOUTE la vignette (trop grosse — tooltip qui
+                -- sautait au moindre survol) ; les FontStrings ne
+                -- reçoivent pas de scripts en Vanilla, donc un bouton
+                -- transparent couvre uniquement le LIBELLÉ, et le tooltip
+                -- ne sort QUE si le nom est réellement tronqué.
+                bouton.zoneLibelle = CreateFrame("Button", nil, bouton)
+                bouton.zoneLibelle:SetPoint("TOPLEFT", bouton.icone, "BOTTOMLEFT", -6, -4)
+                bouton.zoneLibelle:SetSize(ESPACEMENT + 2, 18)
+                bouton.zoneLibelle.libelle = bouton.label
+                bouton.zoneLibelle:SetScript("OnClick", function(self)
+                    if self.nomMob then
+                        mobSelectionne = self.nomMob
+                        RaffraichirDetail()
+                    end
+                end)
+                bouton.zoneLibelle:SetScript("OnEnter", function(self)
+                    if not GameTooltip or not self.nomMob then return end
+                    -- Pas de tooltip si le nom tient déjà dans la cellule.
+                    local okT, tronque = pcall(function()
+                        return self.libelle:GetStringWidth() > self.libelle:GetWidth() + 2
+                    end)
+                    if okT and not tronque then return end
+                    -- Sous le pointeur : TOPLEFT ancre 12px SOUS la souris.
+                    GameTooltip:SetOwner(self, "ANCHOR_NONE")
+                    local ech = UIParent:GetScale()
+                    local mx, my = GetCursorPosition()
+                    GameTooltip:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
+                        mx / ech + 12, my / ech - 12)
+                    GameTooltip:SetText("|cffffd100" .. MHH_NomAffiche(self.nomMob) .. "|r")
+                    GameTooltip:Show()
+                end)
+                bouton.zoneLibelle:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
                 boutonsMobs[ib] = bouton
             end
             bouton:ClearAllPoints()
-            bouton:SetPoint("TOPLEFT", grilleContenu, "TOPLEFT", col * ESPACEMENT, -y)
+            bouton:SetPoint("TOPLEFT", grilleContenu, "TOPLEFT", col * ESPACEMENT + 8, -y)
             bouton:Show()
             bouton.nomMob = nom
+            if bouton.zoneLibelle then bouton.zoneLibelle.nomMob = nom end
             local info = DB.chasses[nom] or {}
             -- Badge NEW : première chasse pas encore consultée, ou découverte récente
             local dec = DB.decouverts[nom]
@@ -4926,15 +7096,18 @@ local function RaffraichirGrille()
             end
             -- La couleur de zone est indiquée par la pastille de l'en-tête, plus ici
             bouton.pastille:Hide()
-            bouton.label:SetText((DB.contrat == nom) and ("|cffff69b4» |cffe9dcc0" .. nom .. "|r") or ("|cffe9dcc0" .. nom .. "|r"))
+            local nomAff = MHH_NomAffiche(nom)
+            bouton.label:SetText((DB.contrat == nom) and ("|cffff69b4» |cffe9dcc0" .. nomAff .. "|r") or ("|cffe9dcc0" .. nomAff .. "|r"))
+            -- Encadrement : doré = chassé, gris = jamais chassé (barres fines)
             if info.kills and info.kills > 0 then
-                bouton.cadre:SetColorTexture(0.78, 0.62, 0.25, 0.95) -- doré : chassé
+                for _, t in ipairs(bouton.cadres) do t:SetColorTexture(0.78, 0.62, 0.25, 0.95) end
             else
-                bouton.cadre:SetColorTexture(0.35, 0.30, 0.20, 0.9) -- gris : jamais chassé
+                for _, t in ipairs(bouton.cadres) do t:SetColorTexture(0.35, 0.30, 0.20, 0.9) end
             end
             if nom == nomCible then
                 DefinirPortrait(bouton.icone, "target")
                 bouton.icone:SetDesaturated(false)
+                bouton.icone:SetVertexColor(1, 1, 1)
             else
                 local vt = TextureVignette(nom)
                 if vt then
@@ -4949,7 +7122,43 @@ local function RaffraichirGrille()
                         bouton.icone:SetTexture("Interface\\Icons\\INV_Misc_MonsterClaw_04")
                     end
                 end
-                bouton.icone:SetDesaturated((info.kills or 0) == 0)
+                -- Couleur dès la RENCONTRE (découverte au ciblage ou
+                -- bête déjà chassée) ; les JAMAIS rencontrées affichent la
+                -- vignette MYSTÈRE (inconnu.tga, grisée volontairement) :
+                -- l'apparence réelle reste une surprise du carnet. Si le
+                -- fichier manque, repli sur l'ancienne silhouette grise.
+                local vu = (DB.decouverts and DB.decouverts[nom]) or (info.kills and info.kills > 0)
+                if vu then
+                    -- MÊME cadrage que la vignette mystère (0.07-0.93) :
+                    -- trouvé et inconnu s'alignent au pixel, plus de
+                    -- « saut » d'un état à l'autre.
+                    bouton.icone:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                    bouton.icone:SetDesaturated(false)
+                    bouton.icone:SetVertexColor(1, 1, 1)
+                else
+                    local okMyst = true
+                    pcall(function()
+                        local ok = bouton.icone:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Specimens\\inconnu.tga")
+                        if ok == false then
+                            ok = bouton.icone:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Vignettes\\inconnu.tga")
+                        end
+                        if ok == false then okMyst = false end
+                    end)
+                    if okMyst then
+                        -- « grisée un peu » : voile gris clair sur le
+                        -- dessin (0.72 : lisible, moins funebre), bords
+                        -- rogne de 7 % (texcoords) si l'image deborde.
+                        bouton.icone:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                        bouton.icone:SetDesaturated(false)
+                        bouton.icone:SetVertexColor(0.72, 0.72, 0.72)
+                    else
+                        -- Fichier absent : ancien rendu (icône famille
+                        -- désaturée) — pas d'icône vide en attendant
+                        bouton.icone:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                        bouton.icone:SetVertexColor(1, 1, 1)
+                        bouton.icone:SetDesaturated(true)
+                    end
+                end
             end
             col = col + 1
             if col >= NB_COLONNES then
@@ -4987,7 +7196,7 @@ end -- fin bloc page Gibier
 do
 local contratsFond = CreateFrame("Frame", nil, pageContrats, MHH_TEMPLATE_BACKDROP)
 contratsFond:SetPoint("TOPLEFT", pageContrats, "TOPLEFT", 44, -42)
-contratsFond:SetSize(552, 314)
+contratsFond:SetSize(552, 320)
 pcall(function()
     contratsFond:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -5042,7 +7251,7 @@ end
 -- (les offres du jour tournent à minuit, capturer la valeur figerait
 -- l'ancienne).
 local offresLignes = {}
-for i = 1, 5 do
+for i = 1, 7 do
     -- Ligne 1 = offre spéciale, sous « OFFRE DU JOUR ». Les 4 contrats
     -- d'appoint vivent sous « CONTRATS DE LA GUILDE », d'où le décalage.
     local y = (i == 1) and -32 or (-88 - (i - 2) * 24)
@@ -5073,61 +7282,33 @@ for i = 1, 5 do
     b:SetScript("OnClick", function()
         local of = DB.offresJour and DB.offresJour.noms
         local nomC = of and of[i]
-        if nomC then PrendreOffreContrat(nomC, (i == 1 and 20) or 5) end
+        if not nomC then return end
+        -- Offre active : le clic RÉVOQUE le contrat au lieu de la prendre
+        if DB.contrat == nomC then
+            DB.contrat = nil
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Contrat révoqué : |cffffff00") .. nomC .. "|r.")
+            if RaffraichirCarnet then RaffraichirCarnet() end
+            if RaffraichirAccueil then RaffraichirAccueil() end
+            RaffraichirContrats()
+            MettreAJourIndicateur()
+            return
+        end
+        PrendreOffreContrat(nomC, (i == 1 and 20) or 5)
     end)
     offresLignes[i] = { txt = l, btn = b }
 end
-ContratsLabel(20, -192, L("CONTRAT ACTIF"))
-local contratsActifTxt = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-contratsActifTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -210)
-contratsActifTxt:SetWidth(330)
-contratsActifTxt:SetJustifyH("LEFT")
-contratsActifTxt:SetShadowColor(0, 0, 0, 1)
-contratsActifTxt:SetShadowOffset(1, -1)
--- Révoquer : abandonne le contrat en cours (la chasse, elle, continue)
-local boutonRevoquer = CreateFrame("Button", nil, contratsFond, MHH_TEMPLATE_BACKDROP)
--- Ancré sous le bouton « Prendre / En cours » : centres alignés, empilement net
-boutonRevoquer:SetPoint("TOPRIGHT", contratsFond, "TOPRIGHT", -16, -210)
-boutonRevoquer:SetSize(96, 22)
-boutonRevoquer:SetText(L("Révoquer"))
-boutonRevoquer:SetNormalFontObject("GameFontHighlight")
-pcall(function()
-    boutonRevoquer:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 8,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    boutonRevoquer:SetBackdropColor(0.30, 0.10, 0.08, 0.85)
-    boutonRevoquer:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
-end)
--- Surbrillance au survol du bouton Révoquer (pleine taille, comme le titre)
-local boutonRevoquerSurbrillance = boutonRevoquer:CreateTexture(nil, "HIGHLIGHT")
-boutonRevoquerSurbrillance:SetAllPoints()
-boutonRevoquerSurbrillance:SetColorTexture(1, 0.85, 0.4, 0.35)
-boutonRevoquer:SetHighlightTexture(boutonRevoquerSurbrillance)
-boutonRevoquer:SetScript("OnEnter", function(self)
-    if GameTooltip then
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:SetText(L("|cffffd100Révoquer le contrat|r"))
-        GameTooltip:AddLine(L("Abandonne le contrat en cours. La prime du contrat (+5, +10 ou +20 points) est perdue, et la chasse en cours (s'il y en a une) continue normalement."), 0.9, 0.8, 0.4, true)
-        GameTooltip:Show()
-    end
-end)
-boutonRevoquer:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-boutonRevoquer:SetScript("OnClick", function()
-    if not DB.contrat then return end
-    local nom = DB.contrat
-    DB.contrat = nil
-    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Contrat révoqué : |cffffff00") .. nom .. "|r.")
-    if RaffraichirCarnet then RaffraichirCarnet() end
-    if RaffraichirAccueil then RaffraichirAccueil() end
-    RaffraichirContrats()
-    MettreAJourIndicateur()
-end)
-ContratsLabel(20, -246, L("HISTORIQUE DES PRIMES"))
+-- (Le bouton Révoquer séparé a été retiré : le bouton de l'offre
+-- active affiche « Révoquer » directement — l'état « contrat en cours »
+-- se lit déjà sur l'accueil et l'indicateur minimap.)
+-- Séparateur bas : ferme la liste des contrats avant l'historique,
+-- symétrique de celui de l'offre du jour
+local histoSep = contratsFond:CreateTexture(nil, "OVERLAY")
+histoSep:SetSize(512, 2)
+histoSep:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 20, -232)
+histoSep:SetColorTexture(0.62, 0.48, 0.22, 0.7)
+ContratsLabel(20, -242, L("HISTORIQUE DES PRIMES"))
 local contratsHistoTxt = contratsFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-contratsHistoTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -262)
+contratsHistoTxt:SetPoint("TOPLEFT", contratsFond, "TOPLEFT", 40, -258)
 contratsHistoTxt:SetWidth(500)
 contratsHistoTxt:SetJustifyH("LEFT")
 contratsHistoTxt:SetSpacing(2)
@@ -5136,20 +7317,32 @@ contratsHistoTxt:SetShadowOffset(1, -1)
 
 RaffraichirContrats = function()
     if not DB then return end
-    -- Offres du jour : 5 lignes — la cible du jour (+20, marquée en or)
-    -- puis 4 offres (+10). Bouton « Prendre (+N) » / « En cours ».
+    -- Offres du jour : 7 lignes — cible du jour (+20) puis 6 offres de
+    -- guilde (+5). Le contrat pris porte son statut sur sa ligne.
     local aujourdhui = date("%y%m%d")
+    -- Correctif « onglet vide » : si les offres date d'un jour passé
+    -- (session traversant minuit sans changement de zone), on RETIRE
+    -- les offres du jour AVANT d'afficher — sinon l'onglet restait vide
+    -- jusqu'au prochain /reload ou changement de zone.
+    if not (DB.offresJour and DB.offresJour.date == aujourdhui) then
+        ContratQuotidien()
+        if RaffraichirAccueil and carnet and carnet:IsShown() then RaffraichirAccueil() end
+    end
     local offres = (DB.offresJour and DB.offresJour.date == aujourdhui) and DB.offresJour.noms or nil
-    for i = 1, 5 do
+    for i = 1, 7 do
         local ligne = offresLignes[i]
         local nom = offres and offres[i] or nil
         if nom then
             local prime = (i == 1) and 20 or 5
             ligne.txt:SetText("|cffffff00" .. nom .. "|r (" .. (MHH_CATALOGUE[nom] or "?") .. ")"
-                .. (i == 1 and (" |cffffcc66• " .. L("(cible du jour)")) or ""))
+                .. (i == 1 and (" |cffffcc66• " .. L("(cible du jour)")) or "")
+                .. (DB.contrat == nom and (" |cffffd100• " .. L("mission en cours") .. " (+" .. (DB.contratPrime or 20) .. ")|r") or ""))
             if DB.contrat == nom then
-                ligne.btn:SetText(L("En cours"))
-                ligne.btn:Disable()
+                -- Le bouton de l'offre active EST le révoquer (l'état
+                -- « en cours » se lit déjà sur l'accueil et la minimap) :
+                -- un bouton inactif « En cours » n'apportait rien.
+                ligne.btn:SetText("|cffff8800" .. L("Révoquer") .. "|r")
+                ligne.btn:Enable()
             else
                 ligne.btn:SetText("Prendre (+" .. prime .. ")")
                 ligne.btn:Enable()
@@ -5159,15 +7352,6 @@ RaffraichirContrats = function()
             ligne.btn:SetText("—")
             ligne.btn:Disable()
         end
-    end
-    -- Contrat actif
-    if DB.contrat then
-        local zc = MHH_CATALOGUE[DB.contrat] or (DB.decouverts[DB.contrat] and DB.decouverts[DB.contrat].zone) or "?"
-        contratsActifTxt:SetText("|cffffd100" .. DB.contrat .. "|r — Habitat : " .. zc)
-        boutonRevoquer:Enable()
-    else
-        contratsActifTxt:SetText(L("|cff8a6d3bAucun contrat en cours — prenez une offre du jour ci-dessus.|r"))
-        boutonRevoquer:Disable()
     end
     -- Historique des primes (3 dernières — le cadre est plus compact)
     local histo = DB.contratHistorique or {}
@@ -5285,6 +7469,61 @@ for i, q in ipairs(MHH_MISSIONS) do
     end)
     cartesMission[i] = { titre = t, etat = s, corps = corps, carte = c, accepter = accepter }
 end
+-- ================= RUMEUR DE GUILDE =================
+-- Carte violette, sous la pile des missions : la mission cachée du jour
+-- (rang minimum requis — sous ce rang, seul un murmure s'affiche).
+local rumeur = CreateFrame("Frame", nil, missionsContenu, MHH_TEMPLATE_BACKDROP)
+rumeur:SetPoint("TOPLEFT", missionsContenu, "TOPLEFT", 0, -yMission)
+rumeur:SetSize(508, 118)
+yMission = yMission + 118 + 6
+pcall(function()
+    rumeur:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    rumeur:SetBackdropColor(0.18, 0.10, 0.26, 0.8)
+    rumeur:SetBackdropBorderColor(0.55, 0.40, 0.75, 0.9)
+end)
+local rumeurIcone = rumeur:CreateTexture(nil, "ARTWORK")
+rumeurIcone:SetSize(52, 52)
+rumeurIcone:SetPoint("LEFT", 10, 0)
+rumeurIcone:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+local rumeurTitre = rumeur:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+rumeurTitre:SetPoint("TOPLEFT", 72, -8)
+local rumeurEtat = rumeur:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+rumeurEtat:SetPoint("TOPRIGHT", -10, -8)
+local rumeurCorps = rumeur:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+rumeurCorps:SetPoint("TOPLEFT", 72, -30)
+rumeurCorps:SetWidth(424)
+rumeurCorps:SetJustifyH("LEFT")
+local rumeurBtn = CreateFrame("Button", nil, rumeur, MHH_TEMPLATE_BACKDROP)
+rumeurBtn:SetPoint("TOPRIGHT", rumeur, "TOPRIGHT", -10, -8)
+rumeurBtn:SetSize(118, 20)
+pcall(function()
+    rumeurBtn:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    rumeurBtn:SetBackdropColor(0.25, 0.14, 0.35, 0.85)
+    rumeurBtn:SetBackdropBorderColor(0.55, 0.40, 0.75, 0.9)
+end)
+local rumeurBtnTxt = rumeurBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+rumeurBtnTxt:SetPoint("CENTER")
+rumeurBtnTxt:SetText(L("Accepter la rumeur"))
+rumeurBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+rumeurBtn:SetScript("OnClick", function()
+    local m = MHH_RumeurDuJour and MHH_RumeurDuJour()
+    if not m or DB.missions[m.id] then return end
+    DB.missionCacheeActive = m.id
+    if DB.config.son then JouerRugissement() end
+    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffb97affRumeur acceptée :|r ")
+        .. m.titre .. L(" — ") .. m.objectif)
+    MHH_RaffraichirMissions()
+end)
 -- Hauteur du contenu : somme des hauteurs cumulées + l'interstice final
 missionsContenu:SetHeight(yMission)
 -- RaffraichirMissions : globale (appelée par AfficherOnglet et par
@@ -5348,6 +7587,48 @@ MHH_RaffraichirMissions = function()
             end
         end)
     end
+    -- Rumeur de guilde : révélée au tirage du jour, « EN COURS » une fois
+    -- acceptée ; sous le rang requis, seul un murmure verrouillé s'affiche.
+    local m = MHH_RumeurDuJour and MHH_RumeurDuJour() or nil
+    if m then
+        local faite = DB.missions[m.id]
+        rumeurTitre:SetText("|cffb97affRUMEUR — " .. m.titre .. "|r")
+        rumeurIcone:SetTexture("Interface\\Icons\\" .. (m.icone or "INV_Misc_QuestionMark"))
+        if faite then
+            rumeurEtat:SetText(L("|cffa0ff50ELUCIDÉE ") .. faite .. "|r")
+            rumeurBtn:Hide()
+        elseif DB.missionCacheeActive == m.id then
+            rumeurEtat:SetText("|cffffc44cEN COURS|r")
+            rumeurBtn:Hide()
+        else
+            rumeurEtat:SetText("")
+            rumeurBtn:Show()
+        end
+        rumeurCorps:SetText("|cffb97aff« " .. m.citation .. " »|r\n\n"
+            .. L("Objectif : |cffffff00") .. m.objectif .. "|r\n\n"
+            .. "|cffffd100+" .. m.points .. L(" points|r |cffc9a24a(") .. m.recompense .. ")|r")
+    else
+        rumeurTitre:SetText("|cffb97affRUMEUR DE GUILDE|r")
+        rumeurEtat:SetText("")
+        rumeurBtn:Hide()
+        -- Quel murmure ? selon le rang et les rumeurs restant à élucider
+        local idxRang = RangGuilde(DB.points)
+        local rangMin, toutesFaites = nil, true
+        for _, mm in ipairs(MHH_MISSIONS_CACHEES) do
+            if not DB.missions[mm.id] then
+                toutesFaites = false
+                if not rangMin or mm.rang < rangMin then rangMin = mm.rang end
+            end
+        end
+        if toutesFaites then
+            rumeurCorps:SetText(L("|cffb97affToutes les rumeurs ont été élucidées — la guilde applaudit, chasseur.|r"))
+        elseif rangMin and idxRang < rangMin then
+            rumeurCorps:SetText(L("|cffb97affDes chasses étranges courent les tavernes… mais la guilde ne murmure qu'aux rangs élevés.|r Rang requis : |cffffff00")
+                .. MHH_RANGS[rangMin].nom .. "|r")
+        else
+            rumeurCorps:SetText(L("|cffb97affAucune rumeur aujourd'hui — la guilde murmure à sa manière, revenez demain.|r"))
+        end
+    end
 end
 end
 
@@ -5356,8 +7637,8 @@ do
 local succesScroll = CreateFrame("ScrollFrame", nil, pageSucces, "UIPanelScrollFrameTemplate")
 -- Fond encadré derrière la liste (cohérent avec la fiche monstre)
 local succesFond = CreateFrame("Frame", nil, pageSucces, MHH_TEMPLATE_BACKDROP)
-succesFond:SetPoint("TOPLEFT", pageSucces, "TOPLEFT", 44, -50)
-succesFond:SetSize(552, 306)
+succesFond:SetPoint("TOPLEFT", pageSucces, "TOPLEFT", 44, -46)
+succesFond:SetSize(552, 310)
 pcall(function()
     succesFond:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -5373,7 +7654,7 @@ end)
 local filtreSucces = ""
 -- RaffraichirSucces : globale (l'onglet Succès l'appelle depuis l'extérieur)
 local succesBarreFond = CreateFrame("Frame", nil, pageSucces, MHH_TEMPLATE_BACKDROP)
-succesBarreFond:SetPoint("TOPLEFT", pageSucces, "TOPLEFT", 44, -28)
+succesBarreFond:SetPoint("TOPLEFT", pageSucces, "TOPLEFT", 44, -25)
 succesBarreFond:SetSize(206, 22)
 pcall(function()
     succesBarreFond:SetBackdrop({
@@ -5392,6 +7673,7 @@ succesRecherche:SetFontObject("GameFontHighlightSmall")
 succesRecherche:SetAutoFocus(false)
 succesRecherche:SetMaxLetters(20)
 succesRecherche:SetJustifyH("LEFT")
+succesRecherche:SetTextInsets(12, 4, 0, 0) -- texte décalé du bord de l'encart
 pcall(function()
     succesRecherche:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -5408,7 +7690,7 @@ succesRecherche:SetScript("OnTextChanged", function(self)
 end)
 succesRecherche:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 succesRecherche.instructions = succesRecherche:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-succesRecherche.instructions:SetPoint("LEFT", 5, 0)
+succesRecherche.instructions:SetPoint("LEFT", 12, 0)
 succesRecherche.instructions:SetText(L("Rechercher un succès..."))
 succesRecherche.instructions:SetTextColor(1, 1, 1)
 succesRecherche:SetScript("OnEditFocusGained", function(self) self.instructions:Hide() end)
@@ -5421,6 +7703,26 @@ succesScroll:SetSize(520, 280)
 local succesContenu = CreateFrame("Frame", nil, succesScroll)
 succesContenu:SetSize(520, 1)
 succesScroll:SetScrollChild(succesContenu)
+
+-- v0.126 : bandeau « CARNET COMPLET » en tête de liste quand tous
+-- les succès sont obtenus — caché sinon (la liste décale de 44px).
+local succesBanniere = CreateFrame("Frame", nil, succesContenu)
+succesBanniere:SetSize(520, 34)
+succesBanniere:SetPoint("TOPLEFT", succesContenu, "TOPLEFT", 0, 0)
+local sbFond = succesBanniere:CreateTexture(nil, "BACKGROUND")
+sbFond:SetAllPoints()
+sbFond:SetColorTexture(0.30, 0.22, 0.08, 0.92)
+local sbTrait = succesBanniere:CreateTexture(nil, "OVERLAY")
+sbTrait:SetHeight(2)
+sbTrait:SetWidth(504)
+sbTrait:SetPoint("TOPLEFT", 8, -2)
+sbTrait:SetColorTexture(0.78, 0.62, 0.25, 1)
+local sbTxt = succesBanniere:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+pcall(function() sbTxt:SetFont("Fonts\\FRIZQT__.TTF", 14) end)
+sbTxt:SetPoint("CENTER", 0, 0)
+sbTxt:SetShadowColor(0, 0, 0, 1)
+sbTxt:SetShadowOffset(1, -1)
+succesBanniere:Hide()
 
 local lignesSucces = {} -- pool de lignes réutilisées (icône + texte)
 RaffraichirSucces = function()
@@ -5479,6 +7781,18 @@ RaffraichirSucces = function()
         l:SetPoint("TOPLEFT", succesContenu, "TOPLEFT", 0, y)
         l:Show()
         return l
+    end
+    -- v0.126 : bandeau complet en tête de liste (44px réservés)
+    local nbObtS = 0
+    for _, s in ipairs(MHH_SUCCES) do
+        if DB.succes[s.id] then nbObtS = nbObtS + 1 end
+    end
+    if nbObtS >= #MHH_SUCCES and #MHH_SUCCES > 0 then
+        succesBanniere:Show()
+        sbTxt:SetText("|cffffd100" .. L("CARNET COMPLET — tous les succès sont obtenus !") .. "|r")
+        y = -44
+    else
+        succesBanniere:Hide()
     end
     -- Filtrage (nom, description, catégorie) puis comptage par catégorie
     local function MatchSucces(s)
@@ -5552,6 +7866,8 @@ end -- fin bloc page Succès
 -- Fond encadré, cohérent avec les autres pages
 do
 local boutonTitre -- forward : créé plus bas, référencé par RaffraichirProfil
+local profilStatsLabel -- forward : le bouton armes masque ce bloc à l'ouverture
+local profilStats -- forward : idem (bloc statistiques de la page Guilde)
 local profilFond = CreateFrame("Frame", nil, pageProfil, MHH_TEMPLATE_BACKDROP)
 profilFond:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 44, -42)
 profilFond:SetSize(552, 314)
@@ -5666,18 +7982,25 @@ MHH_armesBtn:SetScript("OnEnter", function(self)
     if not GameTooltip then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText("|cffffd100" .. L("Armes de chasse") .. "|r")
-    GameTooltip:AddLine(L("|cff8a6d3bCliquez : armes les plus utilisées (histogramme).|r"), 1, 1, 1, true)
+    GameTooltip:AddLine(L("|cff8a6d3bCliquez : armes les plus utilisées.|r"), 1, 1, 1, true)
     GameTooltip:Show()
 end)
 MHH_armesBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 MHH_armesPan = CreateFrame("Frame", nil, pageProfil, MHH_TEMPLATE_BACKDROP)
-MHH_armesPan:SetPoint("TOPLEFT", MHH_armesBtn, "BOTTOMLEFT", -2, -8)
-MHH_armesPan:SetSize(216, 168)
+-- Le panneau SE SUPERPOSE au bloc statistiques (la page est dense) : l'ouvrir
+-- masque les stats, le fermer les rend. Positionné pile sur la zone stats.
+MHH_armesPan:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 58, -192)
+MHH_armesPan:SetSize(280, 158)
 MHH_armesPan:Hide()
-MHH_armesPan:SetFrameStrata("HIGH")
+-- v0.118t : RÉGRESSION encart invisible — plus de SetFrameStrata("HIGH")
+-- (un enfant de strate supérieure à son parent ne rend plus sur ce
+-- client hybride). On reste dans la strate de la page et on monte en
+-- NIVEAU à la place, l effet visuel est le même.
+MHH_armesPan:SetFrameLevel(50)
 -- L'histogramme suit la fenêtre et l'onglet : jamais d'encart orphelin
 -- qui survit à la fermeture du carnet ou à un changement d'onglet.
-pageProfil:SetScript("OnHide", function() MHH_armesPan:Hide() end)
+-- (fermeture de l'histogramme gérée par le HookScript OnHide plus bas :
+--  il rend aussi le bloc statistiques)
 pcall(function()
     MHH_armesPan:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -5697,50 +8020,219 @@ MHH_armesVide:SetText(L("|cffa58b54Aucune prise mesurée encore — l'arme de vo
 MHH_armesVide:SetWidth(196)
 MHH_armesVide:Hide()
 MHH_armesBarres = {}
+-- HISTOGRAMME — colonnes fines, barres petites, libellés VERTICAUX en
+-- diagonale (une lettre par ligne, décalée d'un espace à chaque étage :
+-- astuce Vanilla, SetRotation n'existe pas sur ce client).
+MHH_armesNettoyees = false
 function MHH_RaffraichirArmesHistogramme()
     if not DB then return end
-    local entrees = {}
+    -- NETTOYAGE UNIQUE des entrées parasites : d'anciennes versions ont
+    -- pu enregistrer des lignes de tooltip entières (« Niveau d'objet 17 »)
+    -- comme type d'arme. Clé non reconnue = jetée ; graphie différente =
+    -- fusionnée dans sa forme canonique. (Ici, pas dans InitDB : la fonction
+    -- de normalisation est définie plus bas dans le fichier.)
+    if not MHH_armesNettoyees and DB.armes then
+        MHH_armesNettoyees = true
+        for k, n in pairs(DB.armes) do
+            local canon = NormaliserTypeArme(k)
+            if not canon then
+                DB.armes[k] = nil
+            elseif canon ~= k then
+                DB.armes[canon] = (DB.armes[canon] or 0) + n
+                DB.armes[k] = nil
+            end
+        end
+    end
+    local types = MHH_TypesArmesJoueur()
+    -- v0.38 : fusion 1M/2M à l'affichage (même sac, cf. MHH_GROUPE_ARME)
+    local typesAff = {}
+    local vuType = {}
+    for _, t in ipairs(types) do
+        local p = MHH_GROUPE_ARME[t] or t
+        if not vuType[p] then vuType[p] = true; typesAff[#typesAff + 1] = p end
+    end
+    types = typesAff
+    local comptes = {}
+    for _, canon in ipairs(types) do comptes[canon] = 0 end
     if DB.armes then
         for arme, n in pairs(DB.armes) do
-            entrees[#entrees + 1] = { arme, n }
+            local canon = NormaliserTypeArme(arme)
+            if canon then canon = MHH_GROUPE_ARME[canon] or canon end
+            if comptes[canon] then comptes[canon] = comptes[canon] + n end
         end
-        table.sort(entrees, function(a, b) return a[2] > b[2] end)
     end
-    local maxN = (entrees[1] and entrees[1][2]) or 1
-    MHH_armesVide:SetShown(#entrees == 0)
-    for i = 1, 7 do
+    local total = 0
+    for _, n in pairs(comptes) do total = total + n end
+    MHH_armesVide:SetShown(total == 0)
+    local nbTypes = #types
+    -- géométrie (panneau 280x158, tout ancré depuis le BAS)
+    -- MARGE de sûreté : les colonnes vivent entre « marge » et
+    -- « largeur - marge » — aucune piste ni libellé ne peut coller ou
+    -- déborder du bord du panneau. ADAPTATIF : si la classe a beaucoup
+    -- de types d'armes (chasseur = 10), pistes et libellés se resserrent
+    -- d'eux-mêmes — l'affichage ne peut pas déborder, quelle que soit
+    -- la classe.
+    local largPan = 280
+    local marge = 10
+    local pas = (largPan - 2 * marge) / nbTypes
+    -- GROS COMPTES : la hauteur est NORMALISÉE sur hMax — la plus grosse
+    -- barre plafonne à hMax, les autres à proportion. AGRANDI puis
+    -- RÉDUIT d'un poil (72 → 60) : trop haut à l'œil ; il reste ~25 px
+    -- au-dessus pour le chiffre du compte.
+    local hMax = 60
+    -- l'axe est HAUT : sous lui, la place des libellés verticaux (la plus
+    -- longue étiquette « Haches 2M » = 8 lettres x 9px = 72px de descente)
+    -- axe abaissé : l'ensemble descend de 8 px pour s'équilibrer dans
+    -- le panneau (garde ~15 px de marge sous le plus long libellé)
+    local axe = 46                        -- ligne d'axe depuis le bas (v0.43 : abaissé encore de 14 px — l'espace vide était tout en bas du panneau, l'ensemble remplit maintenant la hauteur)
+    -- Alignement texte/colonne, réglé à l'œil en jeu : les textes
+    -- penchaient à droite à 0 et 3 — 8 px pour tomber sur la colonne.
+    -- ATTENTION : decal apparié aux pistes de 18 px ci-dessous (combo
+    -- 18 px + 8 px = celui validé à l'œil ; à 24 px de piste ou 4 px de
+    -- decal, les textes redécalaient à droite — ne pas changer l'un
+    -- sans l'autre).
+    local decal = 8
+    -- Décalage d'ENSEMBLE : l'histogramme paraît collé à gauche dans le
+    -- panneau — on pousse tout (colonnes, comptes, noms) vers la droite.
+    local offsetX = 10
+    for i, canon in ipairs(types) do
         local barre = MHH_armesBarres[i]
         if not barre then
             barre = {}
             barre.fond = MHH_armesPan:CreateTexture(nil, "BACKGROUND")
-            barre.fond:SetSize(120, 10)
-            barre.fond:SetPoint("TOPLEFT", 12, -22 - (i - 1) * 18)
-            barre.fond:SetColorTexture(0.25, 0.20, 0.12, 0.9)
+            -- PISTE BIEN VISIBLE : sombre et contrastée sur le fond du
+            -- panneau (les essais beige étaient invisibles à l'œil)
+            barre.fond:SetColorTexture(0.09, 0.07, 0.04, 1)
             barre.fill = MHH_armesPan:CreateTexture(nil, "ARTWORK")
-            barre.fill:SetSize(0, 10)
-            barre.fill:SetPoint("TOPLEFT", 12, -22 - (i - 1) * 18)
             barre.fill:SetColorTexture(0.78, 0.62, 0.25, 0.95)
             barre.txt = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            barre.txt:SetPoint("TOPLEFT", 138, -22 - (i - 1) * 18 - 2)
-            barre.txt:SetJustifyH("LEFT")
+            barre.txt:SetJustifyH("CENTER")
+            barre.count = MHH_armesPan:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            barre.count:SetJustifyH("CENTER")
+            barre.ic = MHH_armesPan:CreateTexture(nil, "ARTWORK") -- v0.36 : icône du type d'arme
             MHH_armesBarres[i] = barre
         end
-        local e = entrees[i]
-        if e then
-            barre.fond:Show() barre.fill:Show() barre.txt:Show()
-            barre.fill:SetSize(math.max(3, 120 * e[2] / maxN), 10)
-            barre.txt:SetText("|cffffd100" .. e[2] .. "|r " .. e[1])
+        local n = comptes[canon]
+        local cx = marge + pas * (i - 0.5) + offsetX
+        local colW = pas
+        -- piste : élargie en v0.45 (26 → 32 px max) pour équilibrer les
+        -- grosses icônes — l'ancienne mise en garde « 24 px décrochait les
+        -- textes » est caduque : les libellés verticaux sont remplacés par
+        -- des icônes calées sur cx, indépendantes de la piste. Toujours
+        -- resserrée automatiquement si beaucoup de colonnes.
+        local pisteW = math.min(colW - 10, 32)
+        -- PISTE : repère sous le compte, de l'axe à axe+hMax
+        barre.fond:SetSize(pisteW, hMax)
+        barre.fond:ClearAllPoints()
+        barre.fond:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx + 4 - pisteW / 2, axe)
+        -- BARRE : monte de l'axe — MÊME À 0, un bout de colonne reste
+        -- visible (moche sinon : colonne fantôme sans repère)
+        -- v0.46 : stub 4 → 8 px — avec des pistes de 32 px, un quartier
+        -- de 4 px paraissait écrasé à l'œil.
+        local h = 8
+        -- Montée TRÈS LENTE : le palier de croissance passe de 64 à 128 —
+        -- chaque prise ajoute encore moins de hauteur (1 ≈ 5 px, 4 ≈ 11,
+        -- 9 ≈ 16, 16 ≈ 21, 36 ≈ 32, 128 prises = hauteur max). Les
+        -- colonnes restent comparables (la plus fournie plafonne à hMax
+        -- quand elle dépasse le palier de référence).
+        local h = 4
+        if n > 0 then
+            local nmax = 1
+            for _, v in pairs(comptes) do
+                if v > nmax then nmax = v end
+            end
+            local ref = math.max(nmax, 128) -- palier de croissance étalé
+            h = math.max(8, math.floor(hMax * math.sqrt(n) / math.sqrt(ref) + 0.5))
+            if h > hMax then h = hMax end
+        end
+        barre.fill:ClearAllPoints()
+        barre.fill:SetSize(pisteW, h)
+        barre.fill:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx + 4 - pisteW / 2, axe)
+        barre.fill:Show()
+        if n == 0 then
+            -- gris clair : visible même à 0 sur la piste sombre
+            pcall(function() barre.fill:SetVertexColor(0.55, 0.48, 0.36, 0.95) end)
         else
-            barre.fond:Hide() barre.fill:Hide() barre.txt:Hide()
+            pcall(function() barre.fill:SetVertexColor(1, 1, 1, 1) end)
+        end
+        -- COMPTE : au sommet de la barre. Correction optique : le glyphe
+        -- « 1 » est décentré dans sa boîte (plus de vide à gauche), il
+        -- paraît à droite de sa colonne — 1 px de rabattage le recentre.
+        -- v0.48 : COMPTE encore 4 px plus à gauche (-16 px — retour à l'œil
+        -- après le v0.47 jugé encore trop à droite).
+        barre.count:ClearAllPoints()
+        barre.count:SetPoint("BOTTOM", MHH_armesPan, "BOTTOMLEFT", cx - 12, axe + h + 1)
+        barre.count:SetText(n > 0 and ("|cffffd100" .. n .. "|r") or "|cff7777770|r")
+        -- v0.36 : ICÔNE du type d'arme façon Monster Hunter — le
+        -- libellé vertical ne reste que pour les types sans icône.
+        -- Custom : Textures/arme_<cle>.tga ; sinon l'icône du jeu.
+        local cleIcone = MHH_CLE_ICONE_ARME[canon]
+        local cheminIcone = nil
+        if cleIcone and DB.config.texUI == "custom" then
+            cheminIcone = "Interface\\AddOns\\MHHunt\\Textures\\Weapons\\weapon_" .. (MHH_FICHIER_ARME[cleIcone] or cleIcone) .. ".tga"
+        elseif cleIcone then
+            cheminIcone = MHH_ICONES_ARMES_WOW[canon]
+        end
+        if cheminIcone then
+            pcall(function()
+                -- v0.43 : 34 px max (retour à l'œil : 28 encore petit),
+                -- resserrage automatique si beaucoup de types.
+                local icW = math.min(34, math.max(16, pas - 2))
+                -- calage : 4 px sous l'axe ; décalé de 12 px à GAUCHE
+                -- (retour à l'œil : l'icône paraissait à droite de sa
+                -- colonne — même correction optique que les comptes)
+                barre.ic:SetTexture(cheminIcone)
+                barre.ic:ClearAllPoints()
+                barre.ic:SetPoint("CENTER", MHH_armesPan, "BOTTOMLEFT", cx - 16, axe - 4 - icW / 2)
+                barre.ic:SetSize(icW, icW)
+                barre.ic:Show()
+            end)
+            barre.txt:SetText("")
+            barre.txt:Hide()
+        else
+            barre.ic:Hide()
+            -- LIBELLÉ VERTICAL SIMPLE : une lettre par ligne, centré sous
+            -- l'axe (types sans icône : Pugilat/Hast/Arbalète/Baguette
+            -- en mode icônes du jeu — texte vertical seul, singulier, court)
+            local court = MHH_TYPES_ARMES_COURT[canon] or canon
+            -- libellé trop long ? on abrège avec un point, pas grave
+            if #court > 6 then court = court:sub(1, 5) .. "." end
+            local lignes = {}
+            for li = 1, #court do
+                local c = court:sub(li, li)
+                if c ~= " " then lignes[#lignes + 1] = c end
+            end
+            barre.txt:ClearAllPoints()
+            -- séparé de l'axe par 4 px : le texte ne colle plus à la colonne
+            barre.txt:SetPoint("TOP", MHH_armesPan, "BOTTOMLEFT", cx - decal, axe - 5)
+            barre.txt:SetWidth(math.max(colW, 10))
+            barre.txt:SetJustifyH("CENTER")
+            barre.txt:SetText("|cffd8c9a3" .. table.concat(lignes, "\n") .. "|r")
+            barre.txt:Show()
         end
     end
 end
+
 MHH_armesBtn:SetScript("OnClick", function()
     if MHH_armesPan:IsShown() then
         MHH_armesPan:Hide()
+        -- le bloc statistiques revient
+        if profilStatsLabel then profilStatsLabel:Show() end
+        if profilStats then profilStats:Show() end
     else
         MHH_RaffraichirArmesHistogramme()
+        -- le bloc statistiques laisse la place à l'histogramme
+        if profilStatsLabel then profilStatsLabel:Hide() end
+        if profilStats then profilStats:Hide() end
         MHH_armesPan:Show()
+    end
+end)
+-- Refermer l'histogramme (et rendre les stats) quand on quitte l'onglet Guilde
+pageProfil:HookScript("OnHide", function()
+    if MHH_armesPan and MHH_armesPan:IsShown() then
+        MHH_armesPan:Hide()
+        if profilStatsLabel then profilStatsLabel:Show() end
+        if profilStats then profilStats:Show() end
     end
 end)
 
@@ -5758,7 +8250,7 @@ profilSousTitre:SetText(L("|cff8a6d3bJournal de chasse — Guilde des chasseurs|
 -- garde le lot vedette grisé — une vitrine vide attend ses pièces.
 -- Verrouillés = icône grise/délavée ; débloqués = icône en couleur, tooltip.
 local vitrineLabel = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-vitrineLabel:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -80)
+vitrineLabel:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -70)
 vitrineLabel:SetText(L("|cffffd100TROPHÉES DE CHASSE|r"))
 local TROPHEES = { "premiere", "intact", "nocturne", "grandgibier", "piege" }
 local vitrineTrophees = {}
@@ -5768,7 +8260,7 @@ for i = 1, 5 do
     local b = CreateFrame("Button", nil, pageProfil)
     b.idVitrine = TROPHEES[i] -- réécrit à chaque rafraîchissement du profil
     b:SetSize(30, 30)
-    b:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368 + (i - 1) * 36, -102)
+    b:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368 + (i - 1) * 36, -88)
     b.icon = b:CreateTexture(nil, "ARTWORK")
     b.icon:SetAllPoints(b)
     b.icon:SetTexture("Interface\\Icons\\" .. (sucInfo[TROPHEES[i]] and sucInfo[TROPHEES[i]].tex or "INV_Misc_QuestionMark"))
@@ -5811,7 +8303,7 @@ local function DerniersSucces(nMax)
     return res
 end
 
--- Titres de chasseur : 4 familles au choix (/hunt titre), paliers progressifs
+-- Titres de chasseur : 4 familles au choix (bouton du profil), paliers progressifs
 local TITRES = {
     naturaliste = { -- monstres catalogués
         { seuil = 0,   nom = L("Apprenti du carnet") },
@@ -5870,7 +8362,7 @@ end
 
 -- Palmarès : top 3 des chasses + dernière prise (moitié droite, sous la vitrine)
 local palmaresTitre = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-palmaresTitre:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -152)
+palmaresTitre:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -138)
 palmaresTitre:SetText(L("|cffffd100PALMARÈS DES CHASSES|r"))
 local couleursPalmares = {
     { 0.95, 0.78, 0.25 }, -- or
@@ -5881,12 +8373,12 @@ local palmaresPips, palmaresTextes = {}, {}
 for i = 1, 3 do
     local pip = pageProfil:CreateTexture(nil, "ARTWORK")
     pip:SetSize(10, 10)
-    pip:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -176 - (i - 1) * 24)
+    pip:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -162 - (i - 1) * 24)
     pip:SetColorTexture(couleursPalmares[i][1], couleursPalmares[i][2], couleursPalmares[i][3], 0.95)
     pip:Hide()
     palmaresPips[i] = pip
     local t = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    t:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 384, -174 - (i - 1) * 24)
+    t:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 384, -160 - (i - 1) * 24)
     t:SetWidth(192)
     t:SetJustifyH("LEFT")
     pcall(function() t:SetWordWrap(false) end)
@@ -5896,7 +8388,7 @@ for i = 1, 3 do
     palmaresTextes[i] = t
 end
 local palmaresDerniere = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-palmaresDerniere:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -252)
+palmaresDerniere:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -238)
 palmaresDerniere:SetShadowColor(0, 0, 0, 1)
 palmaresDerniere:SetTextColor(1, 1, 1)
 palmaresDerniere:SetShadowOffset(1, -1)
@@ -5906,7 +8398,7 @@ palmaresDerniere:SetJustifyH("LEFT")
 -- Ornaments de chasse : médailons débloqués selon les statistiques
 -- (calculés en direct, rien à stocker — façon carte de guilde MH)
 local ornementLabel = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-ornementLabel:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -294)
+ornementLabel:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368, -280)
 ornementLabel:SetText(L("|cffffd100ORNEMENTS DE CHASSE|r"))
 local ORNEMENTS = {
     { tex = "Ability_Hunter_BeastTaming", nom = L("Patte du prédateur"), desc = L("10 chasses réussies"),             valeur = function() return nbChasses() end,  objectif = 10 },
@@ -5921,7 +8413,7 @@ local ornementIcons = {}
 for i, med in ipairs(ORNEMENTS) do
     local b = CreateFrame("Button", nil, pageProfil)
     b:SetSize(24, 24)
-    b:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368 + (i - 1) * 32, -316)
+    b:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 368 + (i - 1) * 32, -302)
     b.icon = b:CreateTexture(nil, "ARTWORK")
     b.icon:SetAllPoints(b)
     b.icon:SetTexture("Interface\\Icons\\" .. med.tex)
@@ -5960,10 +8452,10 @@ profilSeparateur2:SetHeight(2)
 profilSeparateur2:SetWidth(264)
 profilSeparateur2:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 64, -186)
 profilSeparateur2:SetColorTexture(0.62, 0.48, 0.22, 0.65)
-local profilStatsLabel = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+profilStatsLabel = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 profilStatsLabel:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 64, -198)
 profilStatsLabel:SetText(L("|cffffd100STATISTIQUES DE CHASSE|r"))
-local profilStats = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+profilStats = pageProfil:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 profilStats:SetPoint("TOPLEFT", pageProfil, "TOPLEFT", 64, -224)
 profilStats:SetWidth(270)
 profilStats:SetJustifyH("LEFT")
@@ -5973,18 +8465,17 @@ profilStats:SetTextColor(1, 1, 1)
 profilStats:SetSpacing(4)
 
 RaffraichirProfil = function()
-    -- Histogramme des armes : affiché d'office à l'ouverture de l'onglet
-    -- (le bouton icône de classe, 22 px sans texture propre, passait pour
-    -- inactif — il reste cliquable pour le replier/déplier).
+    -- Histogramme des armes : rafraîchi mais PAS rouvert d'office — il ne
+    -- s'ouvre QUE sur clic du bouton (l'icône de classe) et se referme à
+    -- chaque sortie d'onglet ; les stats restent visibles par défaut.
     MHH_RaffraichirArmesHistogramme()
-    MHH_armesPan:Show()
     -- Photo du chasseur (portrait live)
     DefinirPortrait(profilPortrait.tex, "player")
     local total = nbChasses()
     local points = DB.points or 0
     local idx, rang = RangGuilde(points)
     profilIdentite:SetText("|cffffd100" .. (UnitName("player") or "?") .. "|r")
-    profilRangTexte:SetText("|cff8a6d3bRang : |cffffd100" .. rang .. "|r")
+    profilRangTexte:SetText("|cff8a6d3bRang : " .. MHH_RangHex(idx) .. rang .. "|r")
     local classeFr, token = UnitClass("player")
     -- Affichage : titre-flavor « chasseur » ; la classe WoW reste en tooltip
     profilClasseTxt:SetText("|cffa58b54"
@@ -5994,9 +8485,21 @@ RaffraichirProfil = function()
     -- Cadre du portrait : se pare des couleurs du rang
     local cr = MHH_COULEURS_RANG[idx] or MHH_COULEURS_RANG[1]
     pcall(function() profilPortrait:SetBackdropBorderColor(cr[1], cr[2], cr[3], 0.95) end)
-    -- Titre de chasseur : famille au choix via /hunt titre, palier selon les stats
+    -- Titre de chasseur : famille au choix via le bouton du profil, palier selon les stats
     local famille = DB.titreFamille or "naturaliste"
-    profilSousTitre:SetText("|cff8a6d3bTitre : |cffffd100« " .. TitreDeFamille(famille) .. " »|r")
+    local titreComplet = TitreDeFamille(famille)
+    profilSousTitre:SetText("|cff8a6d3bTitre : |cffffd100« " .. titreComplet .. " »|r")
+    -- Le titre est souvent tronqué (150 px de large) : le tooltip le montre entier
+    profilSousTitre.titreComplet = titreComplet
+    profilSousTitre:SetScript("OnEnter", function(self)
+        if not GameTooltip then return end
+        -- ANCHOR_CURSOR : collé au pointeur (l'ancien ANCHOR_RIGHT
+        -- s'éloignait du bord droit de la fenêtre du carnet)
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+        GameTooltip:SetText("|cffffd100« " .. (self.titreComplet or "?") .. " »|r")
+        GameTooltip:Show()
+    end)
+    profilSousTitre:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     -- Vitrine de trophées : LES DERNIERS SUCCÈS OBTENUS (couleur, du plus
     -- récent au plus ancien). Emplacements inutilisés : masqués. Si aucun
     -- succès n'est encore obtenu, lot vedette grisé (vitrine en attente).
@@ -6136,30 +8639,58 @@ end -- fin bloc page Profil
 -- de buffs réels : juste de la saveur de chasseur.
 -- Globales : lues par FinChasseVictoire (définie plus haut dans le fichier).
 CUISINE_INGREDIENTS = {
-    viande = { nom = L("Viande de gibier"), icone = "INV_Misc_Food_18" },
-    herbe  = { nom = L("Herbe aromatique"), icone = "INV_Misc_Herb_17" },
-    miel   = { nom = L("Miel sauvage"),     icone = "INV_Misc_Food_01" },
+    -- v0.121 : max = capacité du sac (à saturation, la récolte se perd :
+    -- il faut cuisiner — le compteur affiche N/max, gris au plafond)
+    -- v0.125 : même icône que la plaque viandes de la ménagerie (Food_17)
+    viande = { nom = L("Viande de gibier"), icone = "INV_Misc_Food_17", max = 20 },
+    herbe  = { nom = L("Herbe aromatique"), icone = "INV_Misc_Herb_17", max = 10 },
+    miel   = { nom = L("Miel sauvage"),     icone = "INV_Misc_Food_01", max = 10 },
 }
 CUISINE_RECETTES = {
     roti = {
         nom = L("Rôti du chasseur"), icone = "INV_Misc_Food_16", bonus = 10,
         cout = { viande = 2 },
         desc = L("+10 points sur la prochaine prise."),
+        note = L("La première recette que l'on apprend au bivouac."),
     },
     civet = {
         nom = L("Civet épicé"), icone = "INV_Misc_Food_15", bonus = 25,
         cout = { viande = 2, herbe = 1 },
         desc = L("+25 points sur la prochaine prise."),
+        note = L("L'herbe aromatique réveille la viande de gibier."),
+    },
+    piste = {
+        nom = L("Assiette du pisteur"), icone = "INV_Misc_Food_48", bonus = 40,
+        cout = { viande = 3, herbe = 1 },
+        desc = L("+40 points sur la prochaine prise."),
+        note = L("Le plat des vieux pisteurs : tient au corps pour de longues traques."),
+    },
+    miel = {
+        nom = L("Pain de miel du régisseur"), icone = "INV_Misc_Food_13", bonus = 50,
+        cout = { viande = 1, miel = 2 },
+        desc = L("+50 points sur la prochaine prise."),
+        note = L("Le péché mignon du régisseur — les pensionnaires en raffolent."),
     },
     festin = {
         nom = L("Festin de légende"), icone = "INV_Misc_Food_37", bonus = 60,
         cout = { viande = 3, herbe = 2, miel = 1 },
         desc = L("+60 points sur la prochaine prise."),
+        note = L("Un plat de légende, digne des plus grandes chasses."),
     },
+}
+-- Sources des ingrédients (tooltip de la bourse)
+CUISINE_SOURCES = {
+    viande = L("Récoltée sur la dépouille (40% de chance par prise)."),
+    herbe  = L("Cueillette en zone de chasse (25% de chance)."),
+    miel   = L("Butiné sur les rares abattus (10% de chance)."),
 }
 do
 local cuisineFond = CreateFrame("Frame", nil, pageCuisine, MHH_TEMPLATE_BACKDROP)
 cuisineFond:SetPoint("TOPLEFT", pageCuisine, "TOPLEFT", 44, -42)
+-- v0.161 : RETOUR à 314, la taille standard des autres onglets
+-- (retour : « l'encart gris dépasse le contour du parchemin » —
+-- les attaches latérales). La place se regagne en resserrant le
+-- bloc du haut SANS faire chevaucher (cf. cartouches 36 px).
 cuisineFond:SetSize(552, 314)
 pcall(function()
     cuisineFond:SetBackdrop({
@@ -6172,61 +8703,197 @@ pcall(function()
     cuisineFond:SetBackdropBorderColor(0.75, 0.60, 0.30, 0.9)
 end)
 local cuisineTitre = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-cuisineTitre:SetPoint("TOP", cuisineFond, "TOP", 0, -12)
+cuisineTitre:SetPoint("TOP", cuisineFond, "TOP", 0, -10)
 cuisineTitre:SetText("|cffffd100CUISINE DE CAMP|r")
--- Séparateurs façon carnet MH : trait doré + losange central, mêmes
--- tons que la grille des monstres (harmonie du carnet)
+local function MHH_NumJour()
+    local ok, j = pcall(date, "%j")
+    return (tonumber(j) or 0)
+end
+-- v0.160 : la CITATION du cuistot est RETIRÉE (retour : « au pire
+-- tu retires la citation, à minima ça sera plus aéré ») — tout le
+-- bloc bourse/repas remonte de 12 px, les rangées passent à 42 px.
+-- Trait séparateur doré façon carnet MH
 local function TraitCuisine(y)
     local t = pageCuisine:CreateTexture(nil, "OVERLAY")
     t:SetHeight(2)
     t:SetWidth(480)
     t:SetPoint("TOP", cuisineFond, "TOP", 0, y)
     t:SetColorTexture(0.62, 0.48, 0.22, 0.85)
-    local d = pageCuisine:CreateTexture(nil, "OVERLAY")
-    d:SetSize(6, 6)
-    d:SetPoint("TOP", cuisineFond, "TOP", 0, y - 4)
-    d:SetColorTexture(0.78, 0.62, 0.25, 1)
 end
+-- ===== Bourse : cartouches icône + compteur, tooltip de source =====
+local ordreIngredients = { "viande", "herbe", "miel" }
 local cuisineSacLabel = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-cuisineSacLabel:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 32, -48)
-cuisineSacLabel:SetText(L("|cffc9a24aBourse à objets :|r"))
-local cuisineSac = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-cuisineSac:SetPoint("TOPLEFT", cuisineSacLabel, "TOPRIGHT", 12, 0)
-local cuisineRepasLabel = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-cuisineRepasLabel:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 32, -70)
-cuisineRepasLabel:SetText(L("|cffc9a24aRepas préparé :|r"))
-local cuisineRepas = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-cuisineRepas:SetPoint("TOPLEFT", cuisineRepasLabel, "TOPRIGHT", 12, 0)
-local cuisineBoutons, cuisineCouts = {}, {}
-local ordreRecettes = { "roti", "civet", "festin" }
--- Séparations : sous l'en-tête (sac + repas), puis entre chaque recette
-TraitCuisine(-86)
-for i = 2, #ordreRecettes do
-    TraitCuisine(-100 - (i - 1) * 56 + 8)
+cuisineSacLabel:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 32, -30)
+cuisineSacLabel:SetText(L("|cffc9a24aBourse du chasseur|r"))
+local cuisineCartComptes, cuisineCartMax = {}, {}
+for k, ing in ipairs(ordreIngredients) do
+    local info = CUISINE_INGREDIENTS[ing]
+    local cart = CreateFrame("Frame", nil, pageCuisine, MHH_TEMPLATE_BACKDROP)
+    -- v0.161 : 72x44 -> 62x36 (retour : « trop larges »), icône 20 px,
+    -- compteurs resserrés — tout tient dans la cartouche sans baver.
+    cart:SetSize(62, 36)
+    cart:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 30 + (k - 1) * 78, -42)
+    pcall(function()
+        cart:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = false, edgeSize = 8,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 },
+        })
+        cart:SetBackdropColor(0.18, 0.14, 0.08, 0.65)
+        cart:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
+    end)
+    local ic = cart:CreateTexture(nil, "ARTWORK")
+    ic:SetSize(20, 20)
+    ic:SetPoint("LEFT", cart, "LEFT", 7, 0)
+    ic:SetTexture("Interface\\Icons\\" .. info.icone)
+    local cpt = cart:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    cpt:SetPoint("LEFT", cart, "LEFT", 33, 5)
+    cpt:SetWidth(24)
+    cpt:SetJustifyH("CENTER")
+    cpt:SetText("|cffffd1000|r")
+    local cptMax = cart:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    cptMax:SetPoint("LEFT", cart, "LEFT", 33, -8)
+    cptMax:SetWidth(24)
+    cptMax:SetJustifyH("CENTER")
+    cptMax:SetText("|cff8a6d3b/" .. (info.max or "?") .. "|r")
+    cuisineCartComptes[ing] = cpt
+    cuisineCartMax[ing] = cptMax
+    cart:EnableMouse(true)
+    cart:SetScript("OnEnter", function()
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(cart, "ANCHOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("|cffffd100" .. info.nom .. "|r")
+        GameTooltip:AddLine(CUISINE_SOURCES[ing], 1, 1, 1)
+        local nIng = (DB and (DB[ing] or 0)) or 0
+        local mx = info.max or 99
+        GameTooltip:AddLine(L("En bourse : ") .. nIng .. "/" .. mx, 0.8, 0.8, 0.8)
+        if nIng >= mx then
+            GameTooltip:AddLine(L("Sac plein — cuisine pour libérer de la place."), 1, 0.6, 0.1)
+        end
+        GameTooltip:Show()
+    end)
+    cart:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 end
+-- ===== Repas préparé : panneau icône + nom + effet, à droite =====
+local cuisineRepasLabel = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+cuisineRepasLabel:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 292, -30)
+cuisineRepasLabel:SetText(L("|cffc9a24aRepas préparé|r"))
+-- v0.121 : le repas devient la 4e CASE du mini-sac (cadre assorti)
+local cuisineRepasCart = CreateFrame("Frame", nil, pageCuisine, MHH_TEMPLATE_BACKDROP)
+-- v0.161 : 44x44 -> 44x36 : aligné sur les cartouches de la bourse
+cuisineRepasCart:SetSize(44, 36)
+cuisineRepasCart:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 292, -42)
+pcall(function()
+    cuisineRepasCart:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    cuisineRepasCart:SetBackdropColor(0.18, 0.14, 0.08, 0.65)
+    cuisineRepasCart:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
+end)
+local cuisineRepasIcone = cuisineRepasCart:CreateTexture(nil, "ARTWORK")
+cuisineRepasIcone:SetSize(24, 24)
+cuisineRepasIcone:SetPoint("CENTER", cuisineRepasCart, "CENTER", 0, 0)
+cuisineRepasCart:EnableMouse(true)
+cuisineRepasCart:SetScript("OnEnter", function()
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(cuisineRepasCart, "ANCHOR_RIGHT")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(L("|cffc9a24aRepas préparé|r"))
+    local rec = (DB and DB.repas) and CUISINE_RECETTES[DB.repas]
+    if rec then
+        GameTooltip:AddLine("|cffff7a1a" .. rec.nom .. "|r")
+        GameTooltip:AddLine(rec.desc, 1, 0.55, 0.1)
+        GameTooltip:AddLine(L("— s'appliquera à la prochaine prise."), 0.8, 0.8, 0.8)
+    else
+        GameTooltip:AddLine(L("Aucun — cuisinez pour bonifier la prochaine chasse."), 0.8, 0.8, 0.8)
+    end
+    GameTooltip:Show()
+end)
+cuisineRepasCart:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+local cuisineRepasNom = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+cuisineRepasNom:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 344, -46)
+cuisineRepasNom:SetWidth(196) -- v0.125 : 240 dépassait le bord droit du fond
+cuisineRepasNom:SetJustifyH("LEFT")
+local cuisineRepasEff = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+-- v0.159 : -68 -> -72 et largeur 206 : l'effet respire sous le nom
+-- (retour : « texte complètement serré » quand la phrase se repliait).
+cuisineRepasEff:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 344, -64)
+cuisineRepasEff:SetWidth(206)
+cuisineRepasEff:SetJustifyH("LEFT")
+-- ===== Recettes : 5 rangées avec tooltip détaillé =====
+local cuisineBoutons, cuisineCouts, cuisineNoms = {}, {}, {}
+local ordreRecettes = { "roti", "civet", "piste", "miel", "festin" }
+local function CoutDuJour(rec, pj)
+    -- Plat du jour : coût réduit de moitié (arrondi au-dessus)
+    local out = {}
+    for ing, qte in pairs(rec.cout) do
+        out[ing] = (pj and math.ceil(qte / 2)) or qte
+    end
+    return out
+end
+local function IndicePlatJour()
+    return MHH_NumJour() % #ordreRecettes + 1
+end
+TraitCuisine(-80) -- v0.161 : remonte (cartouches 36 px)
+-- v0.125 : le « Plat du jour » vit sur SON PROPRE bandeau (retour :
+-- le ★ s'affichait « [] » dans la police du client 1.12 et son texte
+-- se téléscopait avec la colonne des effets).
+local cuisinePlatJour = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+cuisinePlatJour:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 32, -84)
+cuisinePlatJour:SetWidth(480)
+cuisinePlatJour:SetJustifyH("LEFT")
+-- v0.127 : LES RECETTES PASSENT EN SCROLLFRAME (retour : ça débordait
+-- en bas du fond et les rangées manquaient d'air). Rangées de 44px,
+-- barre de défilement à droite — prêt pour de futures recettes.
+local cuisineRecettesScroll = CreateFrame("ScrollFrame", nil, pageCuisine, "UIPanelScrollFrameTemplate")
+-- v0.150 : -142 -> -160 : le bandeau « Plat du jour » avalait le haut
+-- de la 1re recette (retour : « un peu mangée »).
+-- v0.153 : -160 -> -150 (retour : trop d'air) — le rognage du haut de
+-- la 1re recette se règle par le PADDING interne du contenu, ci-dessous.
+cuisineRecettesScroll:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 10, -104)
+-- v0.161 : -98 -> -104 (retour : « marge légère mais PLUS GRANDE
+-- entre le plat du jour et la liste ») : ~9 px d'air sous le bandeau.
+cuisineRecettesScroll:SetPoint("BOTTOMRIGHT", cuisineFond, "BOTTOMRIGHT", -28, 8)
+-- v0.158 : -114/-6 -> -110/-10 : la zone visible gagne 8 px et la
+-- dernière rangée respire (18 px d'air sous elle au total).
+local cuisineRecettesContenu = CreateFrame("Frame", nil, cuisineRecettesScroll)
+-- v0.153 : hauteur RÉELLE du contenu (avant : 1 px) + 8 px de marge
+-- HAUTE pour que la 1re rangée ne touche jamais le bord de découpe du
+-- ScrollFrame (retour : « recette 1 rognée sur le haut »).
+-- v0.161 : rangées 42 -> 38 px (retour au fond standard 314) ;
+-- les 5 recettes tiennent ENTIÈRES sans scroll ni chevauchement.
+cuisineRecettesContenu:SetSize(500, 6 + #ordreRecettes * 38 + 4)
+cuisineRecettesScroll:SetScrollChild(cuisineRecettesContenu)
 for i, rid in ipairs(ordreRecettes) do
     local r = CUISINE_RECETTES[rid]
-    local y = -100 - (i - 1) * 56
-    local ic = pageCuisine:CreateTexture(nil, "ARTWORK")
+    local y = -6 - (i - 1) * 38 -- v0.161 : rangée 38 px, fond 314
+    local ic = cuisineRecettesContenu:CreateTexture(nil, "ARTWORK")
     ic:SetSize(28, 28)
-    ic:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 32, y)
+    ic:SetPoint("TOPLEFT", cuisineRecettesContenu, "TOPLEFT", 10, y)
     ic:SetTexture("Interface\\Icons\\" .. r.icone)
-    local n = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    n:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 70, y)
-    n:SetText("|cffffd100" .. r.nom .. "|r")
-    local c = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    c:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 70, y - 18)
-    c:SetWidth(172)
+    local n = cuisineRecettesContenu:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    n:SetPoint("TOPLEFT", cuisineRecettesContenu, "TOPLEFT", 46, y + 2)
+    n:SetWidth(170)
+    n:SetJustifyH("LEFT")
+    cuisineNoms[i] = n
+    local c = cuisineRecettesContenu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    c:SetPoint("TOPLEFT", cuisineRecettesContenu, "TOPLEFT", 46, y - 15)
+    c:SetWidth(170)
     c:SetJustifyH("LEFT")
     cuisineCouts[i] = c
-    local e = pageCuisine:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    e:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 254, y - 6)
-    e:SetWidth(136)
+    local e = cuisineRecettesContenu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    e:SetPoint("TOPLEFT", cuisineRecettesContenu, "TOPLEFT", 222, y + 2)
+    e:SetWidth(100)
     e:SetJustifyH("LEFT")
     e:SetText("|cffff7a1a" .. r.desc .. "|r")
-    local b = CreateFrame("Button", nil, pageCuisine, MHH_TEMPLATE_BACKDROP)
-    b:SetSize(110, 22)
-    b:SetPoint("TOPLEFT", cuisineFond, "TOPLEFT", 402, y - 8)
+    local b = CreateFrame("Button", nil, cuisineRecettesContenu, MHH_TEMPLATE_BACKDROP)
+    b:SetSize(100, 24)
+    b:SetPoint("TOPLEFT", cuisineRecettesContenu, "TOPLEFT", 330, y - 6)
     pcall(function()
         b:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -6239,46 +8906,110 @@ for i, rid in ipairs(ordreRecettes) do
     end)
     local bt = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     bt:SetPoint("CENTER")
-    bt:SetText("|cffffd100Cuisiner|r")
+    bt:SetText("|cffffd100" .. L("Cuisiner") .. "|r")
+    local survol = b:CreateTexture(nil, "HIGHLIGHT")
+    survol:SetAllPoints()
+    survol:SetColorTexture(1, 0.82, 0.35, 0.30)
+    b:SetHighlightTexture(survol)
     b:SetScript("OnClick", function()
         if not DB then return end
         local rec = CUISINE_RECETTES[rid]
-        for ing, qte in pairs(rec.cout) do
+        local pj = (i == IndicePlatJour())
+        local cout = CoutDuJour(rec, pj)
+        for ing, qte in pairs(cout) do
             if (DB[ing] or 0) < qte then
                 DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Il manque des ingrédients pour le ") .. rec.nom .. ".")
                 return
             end
         end
-        for ing, qte in pairs(rec.cout) do DB[ing] = (DB[ing] or 0) - qte end
+        for ing, qte in pairs(cout) do DB[ing] = (DB[ing] or 0) - qte end
         DB.repas = rid
         DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffff7a1a" .. rec.nom .. L("|r préparé : ") .. rec.desc)
         if DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_OPEN or 845) end
-        RaffraichirCuisine()
+        MHH_RaffraichirCuisine()
     end)
     cuisineBoutons[i] = b
+    -- Surface transparente capteur de survol pour le tooltip détaillé
+    local surf = CreateFrame("Frame", nil, cuisineRecettesContenu)
+    surf:SetWidth(320) -- ne couvre PAS le bouton Cuisiner (à x330)
+    surf:SetHeight(42)
+    surf:SetPoint("TOPLEFT", cuisineRecettesContenu, "TOPLEFT", 4, y)
+    surf:EnableMouse(true)
+    surf:SetScript("OnEnter", function()
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(surf, "ANCHOR_TOPLEFT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("|cffffd100" .. r.nom .. "|r")
+        local pj = (i == IndicePlatJour())
+        local cout = CoutDuJour(r, pj)
+        for ing, qte in pairs(cout) do
+            GameTooltip:AddLine(qte .. " " .. CUISINE_INGREDIENTS[ing].nom, 1, 0.82, 0.35)
+        end
+        if pj then
+            GameTooltip:AddLine("|cffff8c00" .. L("Plat du jour — moitié prix") .. "|r", 1, 0.6, 0.2)
+        end
+        GameTooltip:AddLine(r.desc, 1, 0.55, 0.1)
+        GameTooltip:AddLine(r.note, 0.75, 0.75, 0.75)
+        GameTooltip:Show()
+    end)
+    surf:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 end
+cuisineRecettesContenu:SetHeight(#ordreRecettes * 46)
 
-RaffraichirCuisine = function()
+MHH_RaffraichirCuisine = function()
     if not DB then return end
-    local parts = {}
-    for ing, info in pairs(CUISINE_INGREDIENTS) do
-        parts[#parts + 1] = "|cffffd100" .. (DB[ing] or 0) .. "|r " .. info.nom
+    -- Bourse : compteurs des cartouches
+    for _, ing in ipairs(ordreIngredients) do
+        local nIng, mx = DB[ing] or 0, (CUISINE_INGREDIENTS[ing].max or 99)
+        -- Compteur GRIS quand la case est pleine : il faut cuisiner
+        cuisineCartComptes[ing]:SetText((nIng >= mx)
+            and ("|cff8a8a8a" .. nIng .. "|r")
+            or ("|cffffd100" .. nIng .. "|r"))
+        cuisineCartMax[ing]:SetText("|cff8a6d3b/" .. mx .. "|r")
     end
-    cuisineSac:SetText(table.concat(parts, "   "))
+    -- Repas préparé
     if DB.repas and CUISINE_RECETTES[DB.repas] then
-        cuisineRepas:SetText("|cffff7a1a" .. CUISINE_RECETTES[DB.repas].nom .. L("|r — s'appliquera à la prochaine prise."))
+        local rec = CUISINE_RECETTES[DB.repas]
+        cuisineRepasIcone:SetTexture("Interface\\Icons\\" .. rec.icone)
+        cuisineRepasNom:SetText("|cffff7a1a" .. rec.nom .. "|r")
+        cuisineRepasEff:SetText(L("— s'appliquera à la prochaine prise."))
     else
-        cuisineRepas:SetText(L("|cff8a6d3bAucun — cuisinez pour bonifier la prochaine chasse.|r"))
+        cuisineRepasIcone:SetTexture("Interface\\Icons\\" .. CUISINE_INGREDIENTS.viande.icone)
+        -- v0.159 : « Aucun » seul sur sa ligne (l'ancienne phrase
+        -- longue se repliait sur 3 lignes serrées dans 196 px).
+        cuisineRepasNom:SetText("|cff8a6d3b" .. L("Aucun") .. "|r")
+        cuisineRepasEff:SetText("|cff8a6d3b" .. L("Cuisinez pour bonifier la chasse.") .. "|r")
     end
+    -- Bandeau plat du jour (v0.125)
+    local pjRec = CUISINE_RECETTES[ordreRecettes[IndicePlatJour()]]
+    cuisinePlatJour:SetText("|cffff8c00" .. L("Plat du jour :") .. "|r |cffffd100"
+        .. pjRec.nom .. "|r |cffff8c00" .. L("(moitié prix)") .. "|r")
+    -- Recettes : coût affiché (moitié si plat du jour), grisage
     for i, rid in ipairs(ordreRecettes) do
         local rec = CUISINE_RECETTES[rid]
+        local pj = (i == IndicePlatJour())
+        local cout = CoutDuJour(rec, pj)
+        cuisineNoms[i]:SetText(pj and ("|cffff8c00" .. rec.nom .. "|r")
+            or ("|cffffd100" .. rec.nom .. "|r"))
         local coutsTxt, ok = {}, true
-        for ing, qte in pairs(rec.cout) do
+        for ing, qte in pairs(cout) do
             coutsTxt[#coutsTxt + 1] = qte .. " " .. CUISINE_INGREDIENTS[ing].nom
             if (DB[ing] or 0) < qte then ok = false end
         end
         cuisineCouts[i]:SetText(L("|cffc9a24aIngrédients :|r ") .. table.concat(coutsTxt, ", "))
-        if ok then cuisineBoutons[i]:Enable() else cuisineBoutons[i]:Disable() end
+        if ok then
+            cuisineBoutons[i]:Enable()
+            pcall(function()
+                cuisineBoutons[i]:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
+                cuisineBoutons[i]:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
+            end)
+        else
+            cuisineBoutons[i]:Disable()
+            pcall(function()
+                cuisineBoutons[i]:SetBackdropColor(0.15, 0.13, 0.10, 0.75)
+                cuisineBoutons[i]:SetBackdropBorderColor(0.30, 0.28, 0.25, 0.8)
+            end)
+        end
     end
 end
 end
@@ -6347,7 +9078,7 @@ for i, def in ipairs(OPTIONS_DEF) do
         if def.cle == "texUI" and AppliquerTexUI then AppliquerTexUI() end
         if def.cle == "musique" then MHH_ArreterMusique() end
         if def.cle == "chronoMode" and chasseActive then MettreAJourIndicateur() end
-        RaffraichirOptions()
+        MHH_RaffraichirOptions()
     end)
 end
 local optionsNote = pageOptions:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -6356,7 +9087,7 @@ optionsNote:SetWidth(480)
 optionsNote:SetJustifyH("LEFT")
 optionsNote:SetText(L("|cff8a6d3bLes commandes /hunt restent valables — le carnet n'est qu'un raccourci confortable.|r"))
 
-RaffraichirOptions = function()
+MHH_RaffraichirOptions = function()
     if not DB then return end
     for i, def in ipairs(OPTIONS_DEF) do
         local v = DB.config[def.cle]
@@ -6376,982 +9107,17 @@ end
 end
 
 -- ================= GESTION DES ONGLETS =================
--- ================= PAGE MÉNAGERIE (enclos) =================
--- L'enclos : les spécimens capturés (piege + kill) s'y baladent en pixel
--- art. La viande et le miel récoltés en chasse servent à nourrir/gâter.
-local pageMenagerie = CreateFrame("Frame", nil, carnet)
-pageMenagerie:SetAllPoints()
-pageMenagerie:Hide()
+-- ================= PAGE MÉNAGERIE : EXTRAITE =================
+-- v0.67 : la page Ménagerie (enclos, pensionnaires, régisseur,
+-- bâtiments, météo, boucle d'anim) vit dans Menagerie.lua,
+-- chargé APRÈS ce fichier (voir .toc). Ponts : MHH_L, MHH_Carnet,
+-- MHH_MeteoActuelle (fin de ce fichier), MHH_DB (ADDON_LOADED),
+-- MHH_pageMenagerie (Menagerie.lua). RaffraichirMenagerie et
+-- ArreterMenagerieGlobal restent des globales — rien à changer
+-- dans les événements de ce fichier.
 
-MHH_menagerieFond = CreateFrame("Frame", nil, pageMenagerie, MHH_TEMPLATE_BACKDROP)
-MHH_menagerieFond:SetPoint("TOPLEFT", pageMenagerie, "TOPLEFT", 44, -50)
-MHH_menagerieFond:SetSize(552, 320)
-pcall(function()
-    MHH_menagerieFond:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 12,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
-    })
-    MHH_menagerieFond:SetBackdropColor(0.42, 0.33, 0.18, 0.35)
-    MHH_menagerieFond:SetBackdropBorderColor(0.55, 0.42, 0.2, 0.8)
-end)
-MHH_menagerieTitre = MHH_menagerieFond:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-MHH_menagerieTitre:SetPoint("TOP", 0, -8)
-MHH_menagerieTitre:SetText(L("|cffffd100MÉNAGERIE|r"))
--- (Pas de sous-titre ici : le mode d'emploi de la capture est dans le
--- tuto — ici, on laisse toute la place à l'enclos)
-
--- L'enclos proprement dit : décor peint (TGA) au-dessus d'un repli procedural
-MHH_enclosMenagerie = CreateFrame("Frame", nil, MHH_menagerieFond)
-MHH_enclosMenagerie:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 10, -32)
-MHH_enclosMenagerie:SetSize(532, 166)
--- FOND PEINT : la scène complète (ciel, collines, herbe texturée, clôture,
--- grange) est une SEULE image TGA par faction — cf Textures/enclos_*.tga.
-MHH_enclosFondImg = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosFondImg:SetAllPoints(MHH_enclosMenagerie)
--- Décor selon la FACTION du chasseur : ranch horde (savane rouge/brune)
--- ou alliance (prairie verte/blue) — repli sur le décor neutre.
--- NB : sur client Vanilla, SetTexture ne renvoie RIEN (pas de booléen de
--- succès — c'est une API moderne). On ne peut PAS tester le chargement.
--- Stratégie robuste : l'image peinte est dessinée EN DESSUS des textures
--- procédurales (créée après elles dans la même couche = au-dessus). Si le
--- fichier TGA existe il la recouvre entièrement ; s'il manque, la texture
--- reste transparente et le repli procedural reste visible dessous.
-MHH_enclosCiel = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosCiel:SetAllPoints()
-MHH_enclosCiel:SetColorTexture(0.47, 0.66, 0.92, 0.98)
-MHH_enclosBandesCiel = {}
-do
-    -- Dégradé de ciel procédural (REPLI visible sous le TGA s'il manque)
-    local HAUT = 166
-    local NB = 8
-    for b = 1, NB do
-        local t = (b - 0.5) / NB
-        local bande = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-        bande:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", 0, -math.floor(HAUT * (b - 1) / NB))
-        bande:SetSize(532, math.ceil(HAUT / NB) + 1)
-        bande:SetColorTexture(0.47 + 0.16 * t, 0.66 + 0.12 * t, 0.92 - 0.05 * t, 0.98)
-        MHH_enclosBandesCiel[#MHH_enclosBandesCiel + 1] = bande
-    end
-end
-MHH_enclosSol = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-MHH_enclosSol:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 0, 0)
-MHH_enclosSol:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", 0, 0)
-MHH_enclosSol:SetHeight(92)
-MHH_enclosSol:SetColorTexture(0.42, 0.60, 0.30, 1)
--- L'IMAGE PEINTE : dessinée après = AU-DESSUS du repli. Le TGA opaque
--- la recouvre entièrement quand il est présent.
--- Biome affiché = enclos sélectionné (savane/marais/montagne/volcan),
--- ESTOMPÉ par la teinte de faction (horde chaud / alliance froid) tant
--- qu'aucun fond de biome n'existe pour la clé. Ordre de préférence :
---   1. enclos_<biome>.tga (fond du biome sélectionné)
---   2. enclos_<faction>.tga (ranch de la faction)
---   3. enclos.tga (neutre)
-local function MHH_ChargerFondEnclos()
-    if not (MHH_enclosFondImg and DB) then return end
-    local biome = DB.enclosActif or "savane"
-    local essais = {
-        "Interface\\AddOns\\MHHunt\\Textures\\enclos_" .. biome .. ".tga",
-    }
-    pcall(function()
-        local faction = UnitFactionGroup and UnitFactionGroup("player")
-        if faction == "Horde" or faction == "Alliance" then
-            essais[#essais + 1] = "Interface\\AddOns\\MHHunt\\Textures\\enclos_"
-                .. (faction == "Horde" and "horde" or "alliance") .. ".tga"
-        end
-    end)
-    essais[#essais + 1] = "Interface\\AddOns\\MHHunt\\Textures\\enclos.tga"
-    MHH_enclosFondImg:SetTexture(essais[1])
-    -- (Vanilla : pas de retour de SetTexture — le premier chemin qui existe
-    -- gagne ; les fonds de biome manquants retombent sur la faction/neutre
-    -- via la teinte, le repli procedural reste dessous en pire cas.)
-end
-MHH_ChargerFondEnclos()
-
--- Mini-météo de l'enclos : reprend la météo réelle du client (C_Weather,
--- serveur Forever) — pluie/neige/tempête tombent dans l'enclos et le ciel
--- se teinte. Léger : 18 particules, animées par le ticker de la page.
-MHH_particulesMenagerie = {}
-MHH_meteoMenagerie = { cle = nil, verif = 0 }
-MHH_COULEURS_CIEL_ENCLOS = {
-    clear = { 0.55, 0.72, 0.92, 0.98 },
-    cloudy = { 0.62, 0.64, 0.70, 0.98 },
-    rain = { 0.42, 0.50, 0.62, 0.98 },
-    snow = { 0.68, 0.74, 0.86, 0.98 },
-    sandstorm = { 0.72, 0.62, 0.40, 0.98 },
-    firestorm = { 0.55, 0.30, 0.20, 0.98 },
-}
-local function CouleurParticuleMeteo(cle)
-    if cle == "rain" then return 0.55, 0.66, 0.95, 0.85 end
-    if cle == "snow" then return 1, 1, 1, 0.9 end
-    if cle == "sandstorm" then return 0.85, 0.72, 0.45, 0.8 end
-    if cle == "firestorm" then return 1, 0.55, 0.2, 0.9 end
-    return nil -- dégagé ou couvert : pas de particules
-end
-for i = 1, 18 do
-    local p = MHH_enclosMenagerie:CreateTexture(nil, "OVERLAY")
-    p:SetSize(2, 7)
-    p:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", 0, 0)
-    p:Hide()
-    MHH_particulesMenagerie[i] = { t = p, x = math.random() * 532, y = math.random() * 166,
-                               v = 0, dir = 1 }
-end
-local function ConfigurerMeteoEnclos(cle)
-    local ciel = MHH_COULEURS_CIEL_ENCLOS[cle] or MHH_COULEURS_CIEL_ENCLOS.clear
-    -- Cycle jour/nuit : le ciel s'assombrit la nuit (20h - 6h, heure de
-    -- jeu). GetGameTime renvoie (h, m) ou des minutes selon les clients —
-    -- les deux sont couverts.
-    local facteur = 1
-    pcall(function()
-        local a, b = GetGameTime()
-        local heure = b and a or math.floor((a or 0) / 60)
-        if heure >= 20 or heure < 6 then facteur = 0.45 end
-    end)
-    MHH_enclosCiel:SetColorTexture(ciel[1] * facteur, ciel[2] * facteur,
-        ciel[3] * facteur, ciel[4])
-    -- FOND PEINT : l'image unique reçoit la teinte météo + cycle jour/nuit
-    -- (SetVertexColor multiplie : nuit = assombri, pluie = refroidi, le
-    -- pixel art reste lisible). Les replis procéduraux sont teintés pareil.
-    if MHH_enclosFondImg then
-        MHH_enclosFondImg:SetVertexColor(
-            0.55 + 0.45 * ciel[1] * facteur,
-            0.55 + 0.45 * ciel[2] * facteur,
-            0.55 + 0.45 * ciel[3] * facteur)
-    end
-    for bi, bande in ipairs(MHH_enclosBandesCiel or {}) do
-        local t = (bi - 0.5) / #MHH_enclosBandesCiel
-        bande:SetColorTexture((ciel[1] + 0.16 * t) * facteur,
-            (ciel[2] + 0.12 * t) * facteur,
-            (ciel[3] - 0.05 * t) * facteur, ciel[4])
-    end
-    -- Le décor céleste suit la lumière : nuances sombres la nuit, blanches
-    -- le jour — sinon le soleil brillait en plein noir.
-    for _, nuage in ipairs(MHH_enclosNuages) do
-        for _, t in ipairs(nuage) do
-            t:SetVertexColor(facteur, facteur, facteur)
-        end
-    end
-end
-local function ConfigurerParticulesEnclos(cle)
-    local r, g, b, a = CouleurParticuleMeteo(cle)
-    for _, p in ipairs(MHH_particulesMenagerie) do
-        if r then
-            p.t:SetColorTexture(r, g, b, a)
-            p.t:Show()
-            if cle == "snow" then
-                p.v, p.dir = 0.4 + math.random() * 0.5, 1
-            elseif cle == "rain" then
-                p.v, p.dir = 3 + math.random() * 2, 1
-            elseif cle == "sandstorm" then
-                p.v, p.dir = 0.8 + math.random(), 1
-            else -- firestorm : braises qui remontent
-                p.v, p.dir = 0.8 + math.random(), -1
-            end
-            p.y = math.random() * 166
-        else
-            p.v = 0
-            p.t:Hide()
-        end
-    end
-end
-
--- État de faim : calculé depuis le dernier nourrissage (pas de ticker
--- en arrière-plan, tout est dérivé de l'horodatage)
-local function EtatSpecimen(m)
-    local d = time() - (m.nourri or m.capture or time())
-    if d < 86400 then return "repu", "|cffa0ff50Repu|r"
-    elseif d < 259200 then return "faim", "|cffffd100Petite faim|r"
-    else return "affame", L("|cffd87a6aAffamé|r") end
-end
-
--- AFFINITÉ (0-100) : nourrir +4, gâter au miel +10 ; dégrise de 2/jour sans
--- soin. À 100, le pensionnaire est « dévoué » : +10% points de chasse dans
--- sa zone d'habitat, et une piste quotidienne sur un rare de sa zone.
-Affinite = function(m)
-    if not m then return 0 end
-    local base = m.affinite or 0
-    -- décroissance : 2 points par jour écoulé depuis le dernier soin
-    local dernier = m.dernierSoin or m.capture or time()
-    local jours = math.floor((time() - dernier) / 86400)
-    return math.max(0, math.min(100, base - jours * 2))
-end
-local function AffiniteLibelle(v)
-    if v >= 100 then return "|cffff8800Dévoué|r"
-    elseif v >= 60 then return "|cffffd100Attaché|r"
-    elseif v >= 25 then return "|cffa58b54Apprivoisé|r"
-    else return "|cff8a6d3bMéfiant|r" end
-end
-local function SoinSpecimen(m, gain)
-    if not m then return end
-    m.affinite = Affinite(m) + gain          -- repart du valeur déclinée
-    if m.affinite > 100 then m.affinite = 100 end
-    m.dernierSoin = time()
-    -- Succès « Ami dévoué » : le premier pensionnaire à 100 d'affinité
-    if m.affinite >= 100 and DB and DB.succes and not DB.succes["amidevoue"] then
-        DebloquerSucces("amidevoue")
-    end
-end
--- Le pensionnaire dévoué d'une zone donne-t-il un bonus de chasse ici ?
--- (déclarée en tête de fichier : FinChasseVictoire l'appelle avant)
-ZoneAvecAmiDevoue = function(zone)
-    if not (DB and DB.menagerie) then return false end
-    for nom, m in pairs(DB.menagerie) do
-        local z = MHH_CATALOGUE[nom]
-        if z == zone and Affinite(m) >= 100 then return true, nom end
-    end
-    return false
-end
-local function IlYA(t)
-    local d = time() - t
-    if d < 3600 then return math.floor(d / 60) .. " min"
-    elseif d < 86400 then return math.floor(d / 3600) .. " h"
-    else return math.floor(d / 86400) .. " j" end
-end
-
--- Rendu pixel art : une grille de textures 16x16, 5 px par cellule.
--- SPIRITES TGA : si un fichier existe dans
--- Interface\AddOns\MHHunt\Textures\Specimens\<slug>.tga, il REMPLACE la
--- grille (SetTexture renvoie nil si le fichier est absent → repli grille).
--- Génération : magick sprite.png -resize 80x80 -depth 32 <slug>.tga
-MHH_TAILLE_PIX = 5
-MHH_SLUGS_SPRITES = {
-    ["Humar le Seigneur hautain"] = "humar",
-    ["Takk le Bondisseur"] = "takk",
-    ["Mazzranache"] = "mazzranache",
-    ["Sarkoth"] = "sarkoth",
-    ["Flagglemurk le Cruel"] = "flagglemurk",
-    ["Naraxis"] = "naraxis",
-    ["Snarlflare"] = "snarlflare",
-    ["Mor'Ladim"] = "morladim",
-}
-local function CreerSpriteMenagerie(nom, defOpt)
-    local def = defOpt or MHH_SPECIMENS[nom]
-    local f = CreateFrame("Frame", nil, MHH_enclosMenagerie)
-    f:SetSize(16 * MHH_TAILLE_PIX, 16 * MHH_TAILLE_PIX)
-    -- TGA custom d'abord (Textures\Specimens\<slug>.tga)
-    local slug = (defOpt and defOpt.slug) or MHH_SLUGS_SPRITES[nom]
-    if slug then
-        pcall(function()
-            local t = f:CreateTexture(nil, "OVERLAY")
-            t:SetAllPoints(f)
-            if t:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Specimens\\" .. slug .. ".tga") then
-                f.utiliseTga = true
-                -- Sprites 48x48 vue 3/4 DE DESSUS (style farm sim top-down) :
-                -- rendu x2 -> 240 px à l'écran, présence nette dans l'enclos
-                f:SetSize(16 * MHH_TAILLE_PIX * 2.4, 16 * MHH_TAILLE_PIX * 2.4)
-                f.tgaA = t
-                pcall(function() t:SetTexelSnappingBias(0) end) -- pixel art net
-                -- FRAME 2 d'animation : <slug>_2.tga si le fichier existe
-                -- (posture de marche/posée). Bascule automatique dans le
-                -- rafraîchissement de l'enclos, cadence de la marche.
-                local t2 = f:CreateTexture(nil, "OVERLAY")
-                t2:SetAllPoints(f)
-                if t2:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\Specimens\\" .. slug .. "_2.tga") then
-                    f.tgaB = t2
-                    t2:Hide()
-                    pcall(function() t2:SetTexelSnappingBias(0) end)
-                else
-                    t2:Hide()
-                end
-            else
-                t:Hide()
-            end
-        end)
-    end
-    if not f.utiliseTga then
-    -- Animation 2 frames façon sprite rétro : phase A = grille telle
-    -- quelle (debout), phase B = corps écrasé d'1 px vers le bas (pose,
-    -- pattes plantées — les 2 dernières lignes ne bougent pas). La
-    -- bascule se fait dans RaffraichirMenagerie, à la cadence de marche.
-    local pa = CreateFrame("Frame", nil, f)
-    pa:SetAllPoints(f)
-    local pb = CreateFrame("Frame", nil, f)
-    pb:SetAllPoints(f)
-    pb:Hide()
-    f.pa, f.pb = pa, pb
-    local function DessinerGrille(cible, ecrase)
-        for r = 1, 16 do
-            local ligne = def.lignes[r] or ""
-            for c = 1, 16 do
-                local ch = ligne:sub(c, c)
-                if ch ~= "." and ch ~= "" then
-                    local coul = def.palette[ch]
-                    if coul then
-                        local t = cible:CreateTexture(nil, "OVERLAY")
-                        t:SetSize(MHH_TAILLE_PIX, MHH_TAILLE_PIX)
-                        -- pose écrasée : corps (lignes 1-14) enfoncé d'1 px,
-                        -- pattes (lignes 15-16) au sol, bien plantées
-                        local rr = (ecrase and r <= 14) and (r + 1) or r
-                        t:SetPoint("TOPLEFT", (c - 1) * MHH_TAILLE_PIX, -(rr - 1) * MHH_TAILLE_PIX)
-                        t:SetColorTexture(coul[1], coul[2], coul[3], 1)
-                    end
-                end
-            end
-        end
-    end
-    DessinerGrille(pa, false)
-    DessinerGrille(pb, true)
-    end -- fin repli grille pixel
-    return f
-end
-
--- Le régisseur de l'enclos : petit chat en tablier de camp qui veille
--- sur les pensionnaires — clin d'œil aux compagnons félins des camps
--- de chasse. Purement décoratif : il se balance doucement.
-MHH_REGISSEUR = {
-    slug = "regisseur",
-    palette = {
-        ["@"] = {0.55, 0.45, 0.38}, ["#"] = {0.33, 0.26, 0.22},
-        ["o"] = {0.75, 1.0, 0.5},   ["+"] = {0.95, 0.93, 0.88},
-        ["*"] = {1.0, 0.62, 0.75},
-    },
-    lignes = {
-        ".@@..........@@.",
-        ".@@@........@@@.",
-        "..@@@@@@@@@@@@..",
-        "..@@@@@@@@@@@@..",
-        "..@@o@@@@@@o@@..",
-        "..@@o@@@@@@o@@..",
-        "..@@@@@**@@@@@..",
-        "..@@@@@@@@@@@@..",
-        "...@@@@@@@@@@...",
-        "....@@++++@@....",
-        "#..@@++++++@@...",
-        "#..@@++++@@.....",
-        "#..@@@@@@@@.....",
-        "....@#....#@....",
-        "....@#....#@....",
-        "................",
-    },
-}
-MHH_regisseurFrame = nil
-pcall(function()
-    MHH_regisseurFrame = CreerSpriteMenagerie(nil, MHH_REGISSEUR)
-    MHH_regisseurFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10)
-end)
--- Quand l'enclos est vide, le régisseur se la coule douce : boule
--- roulée, yeux fermés, petit « zz » qui flotte
-MHH_REGISSEUR_DORT = {
-    slug = "regisseur_dort",
-    palette = MHH_REGISSEUR.palette,
-    lignes = {
-        "..........zz....",
-        ".........z.z....",
-        "................",
-        "..@@@@..........",
-        ".@@@@@@.........",
-        ".@@#@@@.........",
-        ".@@@@@@@@@@@....",
-        "@@@@@@@@@@@@....",
-        "@@@@@@@@@@@@@...",
-        "@@@@@@@@@@@@@#..",
-        "@@@@@@@@@@@@@@..",
-        ".@@@@@@@@@@@#...",
-        "..@@@@@@@@@.....",
-        "................",
-        "................",
-        "................",
-    },
-}
-MHH_regisseurDortFrame = nil
-pcall(function()
-    MHH_regisseurDortFrame = CreerSpriteMenagerie(nil, MHH_REGISSEUR_DORT)
-    MHH_regisseurDortFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10)
-    MHH_regisseurDortFrame:Hide()
-end)
-
-MHH_spritesMenagerie = {}
-MHH_selectionMenagerie = nil
-MHH_tickerMenagerie = nil
-
-local function ArreterMenagerie()
-    if MHH_tickerMenagerie then MHH_tickerMenagerie:Cancel() MHH_tickerMenagerie = nil end
-end
--- Global : carnet:SetScript("OnHide") l'appelle pour couper le ticker
--- quand la fenêtre se ferme directement depuis l'onglet Ménagerie.
-ArreterMenagerieGlobal = ArreterMenagerie
-local function BoucleMenagerie()
-    if not DB then return end
-    -- Mini-météo : la météo réelle est revérifiée toutes les 1,5 s
-    -- (léger), la chute des particules à chaque tic
-    local maintenant = GetTime()
-    if maintenant - MHH_meteoMenagerie.verif > 1.5 then
-        MHH_meteoMenagerie.verif = maintenant
-        local _, cle = MeteoActuelle()
-        -- le ciel se rafraîchit à chaque revue (cycle jour/nuit), les
-        -- particules seulement quand le temps change réellement
-        ConfigurerMeteoEnclos(cle)
-        if cle ~= MHH_meteoMenagerie.cle then
-            MHH_meteoMenagerie.cle = cle
-            ConfigurerParticulesEnclos(cle)
-        end
-    end
-    for _, p in ipairs(MHH_particulesMenagerie) do
-        if p.v > 0 then
-            p.y = p.y + p.dir * p.v
-            -- pluie de sable : légère dérive horizontale
-            if MHH_meteoMenagerie.cle == "sandstorm" then
-                p.x = p.x + 1.5
-                if p.x > 532 then p.x = 0 end
-            end
-            -- hors enclos : on réapparaît de l'autre côté
-            if p.dir > 0 and p.y > 166 then p.y = -8 p.x = math.random() * 532 end
-            if p.dir < 0 and p.y < -8 then p.y = 166 p.x = math.random() * 532 end
-            p.t:ClearAllPoints()
-            p.t:SetPoint("TOPLEFT", MHH_enclosMenagerie, "TOPLEFT", p.x, p.y)
-        end
-    end
-    -- INTRUS ACTIF : les pensionnaires paniquent (vitesse x4, direction
-    -- fuante) jusqu'à ce que l'intrus s'en aille.
-    local peur = MHH_intrus.nom and GetTime() < MHH_intrus.jusqua
-    if MHH_intrus.nom and not peur then
-        -- l'intrus s'enfuit : message de fin une seule fois
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffffcc66")
-            .. MHH_intrus.nom .. L("|r repart d'où il vient. Le troupeau se calme."))
-        MHH_intrus.nom = nil
-    end
-    for nom, s in pairs(MHH_spritesMenagerie) do
-        local m = DB.menagerie and DB.menagerie[nom]
-        if m then
-            local etat = EtatSpecimen(m)
-            local gate = m.gate and (time() - m.gate) < 3600
-            if peur then
-                s.vNormale = s.vNormale or s.v   -- mémorise l'allure normale
-                s.v = 1.2                        -- panique : vitesse multipliée
-                s.dir = (s.x < 266) and -1 or 1   -- fuir vers le bord proche
-            elseif s.vNormale then
-                s.v = s.vNormale                 -- l'intrus parti : reprise
-                s.vNormale = nil
-            end
-            s.f:ClearAllPoints()
-            -- Ombre portée : créée au premier passage, elle suit le sprite
-            -- (ellipse sombre au sol, le bob la fait légèrement respirer).
-            -- Sans elle, les bêtes semblaient flotter au-dessus de l'herbe.
-            if not s.ombre then
-                local om = MHH_enclosMenagerie:CreateTexture(nil, "BACKGROUND")
-                om:SetSize(16 * MHH_TAILLE_PIX - 14, 7)
-                om:SetColorTexture(0.05, 0.08, 0.04, 0.45)
-                s.ombre = om
-            end
-            s.ombre:ClearAllPoints()
-            if etat == "affame" then
-                -- il boude : coin de l'enclos, tout pâle, immobile
-                s.f:SetAlpha(0.35)
-                s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8, 12)
-                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", 8 + s.f:GetWidth() / 2 - 33, 10)
-                s.ombre:Show()
-                if s.f.pa then s.f.pa:Show() s.f.pb:Hide() end
-                if s.f.tgaA then s.f.tgaA:Show() end
-                if s.f.tgaB then s.f.tgaB:Hide() end
-            else
-                s.f:SetAlpha(1)
-                s.x = s.x + s.dir * s.v
-                local maxi = MHH_enclosMenagerie:GetWidth() - 16 * MHH_TAILLE_PIX - 8
-                if s.x < 4 then s.x = 4 s.dir = 1 end
-                if s.x > maxi then s.x = maxi s.dir = -1 end
-                -- petite marche sautillée ; s'il est gâté : il saute de joie
-                local amp, freq = 3, 3
-                if gate then amp, freq = 9, 7 end
-                local bob = math.abs(math.sin(GetTime() * freq + s.phase)) * amp
-                s.f:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", s.x, 12 + bob)
-                -- l'ombre s'aplatit quand la bête saute : ancre le mouvement
-                local omScale = 1 - bob * 0.045
-                s.ombre:SetSize((16 * MHH_TAILLE_PIX - 14) * omScale, 7 * omScale)
-                s.ombre:SetPoint("BOTTOMLEFT", MHH_enclosMenagerie, "BOTTOMLEFT", s.x + 7, 10)
-                -- Animation 2 frames : la posture alterne à la cadence de
-                -- la marche (debout / posée). Un pensionnaire gâté trottine.
-                local phase = math.floor(GetTime() * (gate and 8 or 4) + s.phase) % 2
-                if s.f.pa then
-                    s.f.pa:SetShown(phase == 0)
-                    s.f.pb:SetShown(phase == 1)
-                end
-                if s.f.tgaA and s.f.tgaB then
-                    s.f.tgaA:SetShown(phase == 0)
-                    s.f.tgaB:SetShown(phase == 1)
-                end
-            end
-        end
-    end
-    -- Le régisseur se balance doucement, indifférent aux caprices ;
-    -- endormi, il respire à peine
-    if MHH_regisseurFrame and MHH_regisseurFrame:IsShown() then
-        local b = math.sin(GetTime() * 1.2) * 1.5
-        MHH_regisseurFrame:ClearAllPoints()
-        MHH_regisseurFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10 + b)
-    end
-    if MHH_regisseurDortFrame and MHH_regisseurDortFrame:IsShown() then
-        local b = math.sin(GetTime() * 0.8)
-        MHH_regisseurDortFrame:ClearAllPoints()
-        MHH_regisseurDortFrame:SetPoint("BOTTOMRIGHT", MHH_enclosMenagerie, "BOTTOMRIGHT", -14, 10 + b)
-    end
-end
-local function DemarrerMenagerie()
-    ArreterMenagerie()
-    if C_Timer and C_Timer.NewTicker then
-        MHH_tickerMenagerie = C_Timer.NewTicker(0.05, BoucleMenagerie)
-    end
-end
-pageMenagerie:HookScript("OnHide", ArreterMenagerie)
-
--- SÉLECTEUR D'ENCLOS : un onglet par biome, débloqué au rang de guilde.
--- Le fond de l'enclos suit le biome choisi ; les slots ne montrent que
--- les pensionnaires/espèces de CE biome.
--- RaffraichirMenagerie est une fonction GLOBALE définie plus bas ; les
--- sélecteurs l'appellent à retardement (OnClick), donc pas de souci d'ordre.
-MHH_boutonsEnclos = {}
-for idxEnc, enc in ipairs(MHH_ENCLOS) do
-    local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-    -- rangée d'onglets juste SOUS le titre (l'enclos commence à -32)
-    b:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT",
-        10 + (idxEnc - 1) * 116, -14)
-    b:SetSize(112, 16)
-    b:SetNormalFontObject("GameFontHighlightSmall")
-    b:SetText(enc.nom)
-    b:GetFontString():SetPoint("CENTER", 0, 0)
-    b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-    pcall(function()
-        b:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8X8",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = false, edgeSize = 6,
-            insets = { left = 2, right = 2, top = 2, bottom = 2 },
-        })
-    end)
-    MHH_boutonsEnclos[enc.cle] = b
-    b:SetScript("OnClick", function()
-        if not DB then return end
-        local idxRang = RangGuilde(DB.points or 0)
-        if idxRang < enc.rang then
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r L'") .. enc.nom
-                .. L(" s'ouvre au rang |cffffff00") .. MHH_RANGS[enc.rang].nom .. L("|r — continuez à chasser."))
-            return
-        end
-        DB.enclosActif = enc.cle
-        if MHH_ChargerFondEnclos then MHH_ChargerFondEnclos() end
-        RaffraichirMenagerie()
-    end)
-end
-
--- Slots de sélection (4 x 2) : un par spécimen possible, « ??? » si
--- pas encore capturé
-MHH_boutonsSpecimen = {}
-local function BoutonSpecimen(i)
-    local b = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-    b:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT",
-        10 + ((i - 1) % 4) * 134, -200 - math.floor((i - 1) / 4) * 32)
-    b:SetSize(130, 28)
-    pcall(function()
-        b:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8X8",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = false, edgeSize = 8,
-            insets = { left = 2, right = 2, top = 2, bottom = 2 },
-        })
-        b:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
-        b:SetBackdropBorderColor(0.45, 0.36, 0.20, 0.9)
-    end)
-    b.txt = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    b.txt:SetPoint("CENTER")
-    -- Surbrillance sur TOUT le bouton (le vieux Quickslot2 était illisible)
-    b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-    b:SetScript("OnClick", function()
-        -- le nom réel vient du biome affiché (MHH_boutonsSpecimen[i].nomSpecimen)
-        MHH_selectionMenagerie = b.nomSpecimen or MHH_SPECIMENS_ORDRE[i]
-        RaffraichirMenagerie()
-    end)
-    -- Tooltip : explique ce que montre le bouton (le « ???/famille »
-    -- n'était pas clair sans explication)
-    b:SetScript("OnEnter", function()
-        if not GameTooltip then return end
-        local nom = b.nomSpecimen or MHH_SPECIMENS_ORDRE[i]
-        local m = DB.menagerie and DB.menagerie[nom]
-        GameTooltip:SetOwner(b, "ANCHOR_TOPLEFT")
-        if m then
-            local _, libelle = EtatSpecimen(m)
-            GameTooltip:AddLine(nom, 1, 0.82, 0)
-            GameTooltip:AddLine(L("Spécimen en enclos — ") .. libelle, 0.8, 0.8, 0.8)
-            GameTooltip:AddLine(L("Famille : ") .. MHH_SPECIMENS[nom].famille, 0.8, 0.8, 0.8)
-            GameTooltip:AddLine(L("Clic : le sélectionner (nourrir / gâter / relâcher)."), 0.55, 0.75, 0.95)
-        else
-            GameTooltip:AddLine(L("Spécimen non capturé"), 0.6, 0.6, 0.6)
-            GameTooltip:AddLine(L("Famille : ") .. MHH_SPECIMENS[nom].famille, 0.8, 0.8, 0.8)
-            GameTooltip:AddLine(L("Capture-le : piège de chasse puis acheve-le,"), 0.8, 0.8, 0.8)
-            GameTooltip:AddLine("ou apprivoise-le avec 5 viandes une fois abattu.", 0.8, 0.8, 0.8)
-            GameTooltip:AddLine(L("Clic : voir ses conditions."), 0.55, 0.75, 0.95)
-        end
-        GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", function()
-        if GameTooltip then GameTooltip:Hide() end
-    end)
-    return b
-end
-
--- Ligne d'info + nourrissage
-MHH_menagerieInfo = MHH_menagerieFond:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_menagerieInfo:SetPoint("TOPLEFT", MHH_menagerieFond, "TOPLEFT", 14, -250)
-MHH_menagerieInfo:SetWidth(532)
-MHH_menagerieInfo:SetWordWrap(true)
-MHH_boutonNourrir = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonNourrir:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", 68, 10)
-MHH_boutonNourrir:SetSize(112, 22)
-pcall(function()
-    MHH_boutonNourrir:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 8,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    MHH_boutonNourrir:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
-    MHH_boutonNourrir:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
-end)
-MHH_boutonNourrirTxt = MHH_boutonNourrir:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_boutonNourrirTxt:SetPoint("CENTER")
-MHH_boutonNourrirTxt:SetShadowColor(0, 0, 0, 1)
-MHH_boutonNourrirTxt:SetShadowOffset(1, -1)
-MHH_boutonNourrir:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-MHH_boutonNourrir:SetScript("OnClick", function()
-    if not MHH_selectionMenagerie or not DB.menagerie then return end
-    local m = DB.menagerie[MHH_selectionMenagerie]
-    if not m then
-        -- Apprivoisement (repli sans piège) : le gibier doit déjà avoir
-        -- été abattu, et il faut 5 viandes pour le dresser
-        local kills = DB.chasses[MHH_selectionMenagerie] and DB.chasses[MHH_selectionMenagerie].kills or 0
-        if kills < 1 then
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Ce gibier n'a jamais été abattu — chasse-le d'abord."))
-            return
-        end
-        if (DB.viande or 0) < 5 then
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Il faut 5 viandes pour apprivoiser ce spécimen."))
-            return
-        end
-        DB.viande = DB.viande - 5
-        DB.menagerie[MHH_selectionMenagerie] = { capture = time(), nourri = time() }
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffffff00" .. MHH_selectionMenagerie
-            .. L("|r est apprivoisé et rejoint l'enclos !"))
-        RaffraichirMenagerie()
-        return
-    end
-    if (DB.viande or 0) < 1 then
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Pas de viande — chasse pour en récolter (40% par prise)."))
-        return
-    end
-    DB.viande = DB.viande - 1
-    m.nourri = time()
-    SoinSpecimen(m, 4)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffffff00" .. MHH_selectionMenagerie
-        .. L("|r se régale d'une viande de gibier."))
-    RaffraichirMenagerie()
-end)
-MHH_boutonGater = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonGater:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", 196, 10)
-MHH_boutonGater:SetSize(112, 22)
-pcall(function()
-    MHH_boutonGater:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 8,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    MHH_boutonGater:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
-    MHH_boutonGater:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
-end)
-MHH_boutonGaterTxt = MHH_boutonGater:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_boutonGaterTxt:SetPoint("CENTER")
-MHH_boutonGaterTxt:SetShadowColor(0, 0, 0, 1)
-MHH_boutonGaterTxt:SetShadowOffset(1, -1)
-MHH_boutonGater:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-MHH_boutonGater:SetScript("OnClick", function()
-    if not MHH_selectionMenagerie or not DB.menagerie then return end
-    local m = DB.menagerie[MHH_selectionMenagerie]
-    if not m then return end
-    if (DB.miel or 0) < 1 then
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Pas de miel — il se déniche sur les rares (10%)."))
-        return
-    end
-    DB.miel = DB.miel - 1
-    m.gate = time()
-    SoinSpecimen(m, 10)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffffff00" .. MHH_selectionMenagerie
-        .. "|r savoure son miel — regarde-le sauter de joie !")
-    RaffraichirMenagerie()
-end)
--- Relâcher : le spécimen repart dans la nature (la fiche de chasse reste)
-MHH_boutonRelacher = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonRelacher:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", -62, 10)
-MHH_boutonRelacher:SetSize(112, 22)
-pcall(function()
-    MHH_boutonRelacher:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 8,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    MHH_boutonRelacher:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
-    MHH_boutonRelacher:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
-end)
-MHH_boutonRelacherTxt = MHH_boutonRelacher:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_boutonRelacherTxt:SetPoint("CENTER")
-MHH_boutonRelacherTxt:SetShadowColor(0, 0, 0, 1)
-MHH_boutonRelacherTxt:SetShadowOffset(1, -1)
-MHH_boutonRelacher:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-MHH_boutonRelacher:SetScript("OnClick", function()
-    if not MHH_selectionMenagerie or not DB.menagerie then return end
-    if not DB.menagerie[MHH_selectionMenagerie] then
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Ce spécimen n'est pas en enclos."))
-        return
-    end
-    local nom = MHH_selectionMenagerie
-    -- Relâcher un pensionnaire : contrepoint des primes de chasse, très MH
-    DebloquerSucces("coeur_tendre")
-    DB.menagerie[nom] = nil
-    MHH_selectionMenagerie = nil
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r |cffffff00" .. nom
-        .. L("|r repart dans la nature... bonne chance à lui, petit guy."))
-    RaffraichirMenagerie()
-end)
--- Tous nourrir : un clic, tous les pensionnaires affamés ou en petite faim
--- reçoivent une viande (jusqu'à épuisement de la réserve)
-MHH_boutonTous = CreateFrame("Button", nil, MHH_menagerieFond, MHH_TEMPLATE_BACKDROP)
-MHH_boutonTous:SetPoint("BOTTOM", MHH_menagerieFond, "BOTTOM", -190, 10)
-MHH_boutonTous:SetSize(112, 22)
-pcall(function()
-    MHH_boutonTous:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 8,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    MHH_boutonTous:SetBackdropColor(0.30, 0.22, 0.10, 0.75)
-    MHH_boutonTous:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
-end)
-MHH_boutonTousTxt = MHH_boutonTous:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-MHH_boutonTousTxt:SetPoint("CENTER")
-MHH_boutonTousTxt:SetShadowColor(0, 0, 0, 1)
-MHH_boutonTousTxt:SetShadowOffset(1, -1)
-MHH_boutonTous:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-MHH_boutonTous:SetScript("OnClick", function()
-    if not DB.menagerie then return end
-    local nourris = 0
-    for _, nom in ipairs(MHH_SPECIMENS_ORDRE) do
-        local m = DB.menagerie[nom]
-        if m and EtatSpecimen(m) ~= "repu" then
-            if (DB.viande or 0) < 1 then break end
-            DB.viande = DB.viande - 1
-            m.nourri = time()
-            SoinSpecimen(m, 2)
-            nourris = nourris + 1
-        end
-    end
-    if nourris > 0 then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. nourris
-            .. L(" pensionnaire(s) nourri(s) d'une viande chacun."))
-    else
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Tout le monde est repu (ou plus de viande).")
-    end
-    RaffraichirMenagerie()
-end)
-
--- INTRUS : parfois (20% à l'ouverture de l'onglet, 1 fois/heure max), un
--- gibier sauvage surgit dans l'enclos et affole les pensionnaires pendant
--- 12 s (ils se dispersent) ; s'il est encore là, il s'enfuit. Le message
--- indique sa zone — le chasseur sait où traquer la bestiole effrontée.
-MHH_intrus = { nom = nil, jusqua = 0 }
-local function PeutDeclencherIntrus()
-    if not DB then return false end
-    if not DB.menagerie then return false end
-    local nb = 0
-    for _ in pairs(DB.menagerie) do nb = nb + 1 end
-    if nb == 0 then return false end        -- enclos vide : rien à effrayer
-    if time() < (DB.intrusCooldown or 0) then return false end
-    return math.random(100) <= 20
-end
-local function DeclencherIntrus()
-    -- L'INTRUS : un gibier du CARNET DE CHASSE (rares Forever du data file —
-    -- jamais un boss de raid ni un PNJ hors carnet). Préférence : une bête de
-    -- la zone d'un pensionnaire de l'enclos affiché (cohérence), sinon
-    -- n'importe quel rare catalogué.
-    local biome = DB.enclosActif or "savane"
-    local zonesResidents = {}
-    for _, enc in ipairs(MHH_ENCLOS) do
-        if enc.cle == biome then
-            for _, nom in ipairs(enc.specimens) do
-                local z = MHH_CATALOGUE[nom]
-                if z then zonesResidents[z] = true end
-            end
-        end
-    end
-    local candidats, candidatsZone = {}, {}
-    for nomC in pairs(MHH_CATALOGUE) do
-        if MHH_EstNomAffichable(nomC) then
-            candidats[#candidats + 1] = nomC
-            if zonesResidents[MHH_CATALOGUE[nomC]] then
-                candidatsZone[#candidatsZone + 1] = nomC
-            end
-        end
-    end
-    if #candidats == 0 then return end
-    local liste = (#candidatsZone > 0) and candidatsZone or candidats
-    local intrusNom = liste[math.random(#liste)]
-    MHH_intrus.nom = intrusNom
-    MHH_intrus.jusqua = GetTime() + 12
-    DB.intrusCooldown = time() + 3600
-    DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r |cffff5050Un intrus !|r ")
-        .. intrusNom .. L(" saute la clôture de l'enclos et effraye le troupeau !"))
-    ToastSucces("Interface\\Icons\\Ability_Hunter_BeastTaming",
-        L("Intrus dans l'enclos"), intrusNom)
-end
-
-function RaffraichirMenagerie()
-    if not DB then return end
-    DB.menagerie = DB.menagerie or {}
-    -- INTRUS : tirage à l'ouverture de l'enclos (garde-fou anti-spam)
-    if not MHH_intrus.nom and PeutDeclencherIntrus() then DeclencherIntrus() end
-    -- Succès « Enclos complet » : tous les spécimens de la savane capturés
-    if DB.succes and not DB.succes["encloscomplet"] then
-        local complet = true
-        for _, nomC in ipairs(MHH_ENCLOS[1].specimens) do
-            if not DB.menagerie[nomC] then complet = false break end
-        end
-        if complet then DebloquerSucces("encloscomplet") end
-    end
-    -- Enclos actif : le biome de rattachement du spécimen sélectionné, sinon
-    -- le premier enclos débloqué (les vieux perros ont « savane » par défaut).
-    local biome = DB.enclosActif or "savane"
-    -- Onglets du sélecteur : actif = doré, verrouillé = grisé, dispo = neutre
-    local idxRang = RangGuilde(DB.points or 0)
-    for _, enc in ipairs(MHH_ENCLOS) do
-        local b = MHH_boutonsEnclos[enc.cle]
-        if b then
-            if enc.cle == biome then
-                b:GetFontString():SetText("|cffffd100" .. enc.nom .. "|r")
-            elseif idxRang < enc.rang then
-                b:GetFontString():SetText("|cff555555" .. enc.nom .. "|r")
-            else
-                b:GetFontString():SetText(enc.nom)
-            end
-        end
-    end
-    -- Pensionnaires du biome affiché (ranch des savanes au premier plan)
-    local specimensBiome = {}
-    for _, enc in ipairs(MHH_ENCLOS) do
-        if enc.cle == biome then
-            for _, nom in ipairs(enc.specimens) do
-                specimensBiome[#specimensBiome + 1] = nom
-            end
-        end
-    end
-    -- Sprites : créer si besoin, montrer/cacher selon capture ET biome
-    for _, nom in ipairs(MHH_SPECIMENS_ORDRE) do
-        local dansBiome = (MHH_ENCLOS_DU_SPECIMEN[nom] == biome)
-        if DB.menagerie[nom] and dansBiome then
-            if not MHH_spritesMenagerie[nom] then
-                MHH_spritesMenagerie[nom] = {
-                    f = CreerSpriteMenagerie(nom),
-                    x = 20 + math.random(0, 300),
-                    dir = (math.random(2) == 1) and 1 or -1,
-                    v = 0.15 + math.random() * 0.3,
-                    phase = math.random() * 6,
-                }
-            end
-            MHH_spritesMenagerie[nom].f:Show()
-        elseif MHH_spritesMenagerie[nom] then
-            MHH_spritesMenagerie[nom].f:Hide()
-            if MHH_spritesMenagerie[nom].ombre then
-                MHH_spritesMenagerie[nom].ombre:Hide()
-            end
-        end
-    end
-    -- Ce biome compte-t-il des pensionnaires ?
-    local nbCaptures = 0
-    for _, nom in ipairs(specimensBiome) do
-        if DB.menagerie[nom] then nbCaptures = nbCaptures + 1 end
-    end
-    MHH_enclosVide:SetShown(nbCaptures == 0)
-    -- Le régisseur : debout dès qu'il a du monde, roulé en boule sinon
-    if MHH_regisseurFrame then MHH_regisseurFrame:SetShown(nbCaptures > 0) end
-    if MHH_regisseurDortFrame then MHH_regisseurDortFrame:SetShown(nbCaptures == 0) end
-    -- Slots : espèces du biome affiché uniquement (les surnuméraires masqués)
-    for i = #specimensBiome + 1, #MHH_boutonsSpecimen do
-        if MHH_boutonsSpecimen[i] and MHH_boutonsSpecimen[i].Hide then
-            MHH_boutonsSpecimen[i]:Hide()
-        end
-    end
-    for i, nom in ipairs(specimensBiome) do
-        if not MHH_boutonsSpecimen[i] then MHH_boutonsSpecimen[i] = BoutonSpecimen(i) end
-        MHH_boutonsSpecimen[i]:Show()
-        local capt = DB.menagerie[nom]
-        MHH_boutonsSpecimen[i].nomSpecimen = nom
-        if capt then
-            local _, libelle = EtatSpecimen(capt)
-            MHH_boutonsSpecimen[i].txt:SetText("|cffffd100" .. nom .. "|r — " .. libelle
-                .. " |cffc9a24a(" .. AffiniteLibelle(Affinite(capt)) .. ")|r")
-        else
-            MHH_boutonsSpecimen[i].txt:SetText("|cff8a6d3b???|r |cffc9a24a(" .. MHH_SPECIMENS[nom].famille .. ")|r")
-        end
-    end
-    -- Nourrissage rapide : combien de bouches à nourrir ?
-    local nbFaim = 0
-    for _, nom in ipairs(MHH_SPECIMENS_ORDRE) do
-        local capt = DB.menagerie[nom]
-        if capt and EtatSpecimen(capt) ~= "repu" then nbFaim = nbFaim + 1 end
-    end
-    if nbFaim > 0 then
-        MHH_boutonTousTxt:SetText("|cffffd100Tous nourrir|r (" .. nbFaim .. ")")
-    else
-        MHH_boutonTousTxt:SetText("|cff8a6d3bTous repus|r")
-    end
-    -- Sélection : conservée même non-capturée (pour l'apprivoisement),
-    -- premier capturé par défaut
-    if MHH_selectionMenagerie and not MHH_SPECIMENS[MHH_selectionMenagerie] then
-        MHH_selectionMenagerie = nil
-    end
-    if not MHH_selectionMenagerie then
-        for _, nom in ipairs(MHH_SPECIMENS_ORDRE) do
-            if DB.menagerie[nom] then MHH_selectionMenagerie = nom break end
-        end
-    end
-    if MHH_selectionMenagerie then
-        local m = DB.menagerie[MHH_selectionMenagerie]
-        local kills = DB.chasses[MHH_selectionMenagerie] and DB.chasses[MHH_selectionMenagerie].kills or 0
-        if m then
-            local _, libelle = EtatSpecimen(m)
-            local gate = m.gate and (time() - m.gate) < 3600
-            MHH_menagerieInfo:SetText("|cffffff00" .. MHH_selectionMenagerie .. "|r |cffc9a24a("
-                .. MHH_SPECIMENS[MHH_selectionMenagerie].famille .. L(")|r — ") .. libelle
-                .. L(", nourri il y a ") .. IlYA(m.nourri or m.capture or time())
-                .. (gate and L(" |cffff7a1a— gâté au miel !|r") or ""))
-            MHH_boutonNourrirTxt:SetText("|cffffd100Nourrir|r (1 viande : " .. (DB.viande or 0) .. ")")
-            MHH_boutonGaterTxt:SetText("|cffffd100Gâter|r (1 miel : " .. (DB.miel or 0) .. ")")
-            MHH_boutonRelacherTxt:SetText("|cffd87a6aRelâcher|r")
-        elseif kills > 0 then
-            MHH_menagerieInfo:SetText("|cffffff00" .. MHH_selectionMenagerie .. "|r |cffc9a24a("
-                .. MHH_SPECIMENS[MHH_selectionMenagerie].famille .. L(")|r — |cff8a6d3bpas en enclos :|r ")
-                .. "apprivoise-le avec 5 viandes (" .. (DB.viande or 0) .. L(" en réserve)."))
-            MHH_boutonNourrirTxt:SetText("|cffffd100Apprivoiser|r (5 viandes)")
-            MHH_boutonGaterTxt:SetText("|cffffd100Gâter|r")
-            MHH_boutonRelacherTxt:SetText("|cff8a6d3bRelâcher|r")
-        else
-            MHH_menagerieInfo:SetText("|cffffff00" .. MHH_selectionMenagerie .. "|r |cffc9a24a("
-                .. MHH_SPECIMENS[MHH_selectionMenagerie].famille .. L(")|r — |cff8a6d3bnon abattu :|r ")
-                .. "chasse-le, puis apprivoise-le avec 5 viandes.")
-            MHH_boutonNourrirTxt:SetText("|cff8a6d3bApprivoiser|r (5 viandes)")
-            MHH_boutonGaterTxt:SetText("|cffffd100Gâter|r")
-            MHH_boutonRelacherTxt:SetText("|cff8a6d3bRelâcher|r")
-        end
-    else
-        MHH_menagerieInfo:SetText(L("|cff8a6d3bSélectionne un spécimen capturé pour le nourrir.|r"))
-        MHH_boutonNourrirTxt:SetText("|cffffd100Nourrir|r")
-        MHH_boutonGaterTxt:SetText("|cffffd100Gâter|r")
-    end
-    DemarrerMenagerie()
-end
 
 function AfficherOnglet(id)
-    -- L'indice pulsant « Ton gibier t'attend ici » disparaît dès qu'on
-    -- visite la page Gibier (première visite mémorisée dans la config)
-    if CacherIndiceGibier then CacherIndiceGibier(id) end
     pageAccueil:SetShown(id == "accueil")
     pageMonstres:SetShown(id == "monstres")
     pageSucces:SetShown(id == "succes")
@@ -7359,7 +9125,7 @@ function AfficherOnglet(id)
     pageContrats:SetShown(id == "contrats")
     pageCuisine:SetShown(id == "cuisine")
     pageMissions:SetShown(id == "missions")
-    pageMenagerie:SetShown(id == "menagerie")
+    MHH_pageMenagerie:SetShown(id == "menagerie")
     pageOptions:SetShown(id == "options")
     for oid, b in pairs(onglets) do
         if oid == id then
@@ -7379,10 +9145,10 @@ function AfficherOnglet(id)
     elseif id == "contrats" then RaffraichirContrats()
     elseif id == "succes" then RaffraichirSucces()
     elseif id == "profil" then RaffraichirProfil()
-    elseif id == "cuisine" then RaffraichirCuisine()
+    elseif id == "cuisine" then MHH_RaffraichirCuisine()
     elseif id == "missions" then MHH_RaffraichirMissions()
     elseif id == "menagerie" then RaffraichirMenagerie()
-    elseif id == "options" then RaffraichirOptions() end
+    elseif id == "options" then MHH_RaffraichirOptions() end
 end
 
 CreerOnglet("accueil", L("tab_accueil"), 56, "INV_Misc_Note_01")
@@ -7459,6 +9225,8 @@ MHH_tutoCocheTxt:SetPoint("LEFT", MHH_tutoCoche, "RIGHT", 6, 0)
 MHH_tutoCocheTxt:SetText("|cffa58b54Ne plus afficher|r")
 MHH_tutoCocheTxt:SetShadowColor(0, 0, 0, 1)
 MHH_tutoCocheTxt:SetShadowOffset(1, -1)
+-- Forward : le serment (défini plus bas) s'affiche après « Compris ! »
+-- (déjà déclaré en tête de fichier : forward pour le tuto ci-dessous)
 MHH_tutoBouton = CreateFrame("Button", nil, MHH_tutoCadre, MHH_TEMPLATE_BACKDROP)
 MHH_tutoBouton:SetSize(150, 26)
 MHH_tutoBouton:SetPoint("BOTTOM", MHH_tutoCadre, "BOTTOM", 15, 16)
@@ -7486,80 +9254,243 @@ MHH_tutoBouton:SetScript("OnClick", function()
     MHH_tutoPan:Hide()
     if DB and MHH_tutoCoche:GetChecked() then DB.tutoPanVu = true end
     if DB and DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_OPEN or 845) end
-    -- Intro guidée : une fois le tuto lu, on pointe l'onglet Gibier
-    if DB and not DB.config.gibierVu then AfficherIndiceGibier() end
+    -- Le serment suit la bienvenue (première fois OU relecture /hunt tuto)
+    if DB and MHH_sermentPan then MHH_MontrerSerment() end
 end)
 MHH_tutoPan:SetScript("OnHide", function()
     if DB and MHH_tutoCoche:GetChecked() then DB.tutoPanVu = true end
 end)
 MHH_tutoPan:Hide()
 
--- Indice pulsant « → Ton gibier t'attend ici » : flèche d'objectif collée
--- à l'onglet Gibier après le tuto, façon guide MH. S'efface au premier
--- clic sur l'onglet (mémorisé dans DB.config.gibierVu).
--- NB : rattaché au carnet (pas UIParent) : il se cache avec lui.
-local indiceGibier = CreateFrame("Frame", nil, carnet)
-indiceGibier:SetSize(210, 26)
-indiceGibier:SetFrameLevel(15)
+-- Limite 200 locales : la section serment vit dans son bloc do (ses
+-- ~10 locales se libèrent à la fin du bloc)
+do
+-- SECOND PANNEAU DU TUTO : « LE SERMENT DU CHASSEUR » — le choix de
+-- la voie (kill souple/strict) avec flaveur MH. Apparaît après le
+-- panneau de bienvenue à la première ouverture du carnet ; revisible
+-- via /hunt tuto. Modifiable ensuite par /hunt kill loose/strict.
+MHH_sermentPan = CreateFrame("Frame", nil, carnet)
+MHH_sermentPan:SetAllPoints()
+MHH_sermentPan:SetFrameStrata("HIGH")
+MHH_sermentPan:SetFrameLevel(21)
+MHH_sermentPan:EnableMouse(true)
+local sermentFond = MHH_sermentPan:CreateTexture(nil, "BACKGROUND")
+sermentFond:SetAllPoints()
+sermentFond:SetColorTexture(0.02, 0.01, 0.01, 0.80)
+local sermentCadre = CreateFrame("Frame", nil, MHH_sermentPan, MHH_TEMPLATE_BACKDROP)
+sermentCadre:SetSize(480, 308)
+sermentCadre:SetPoint("CENTER")
 pcall(function()
-    indiceGibier:SetBackdrop({
+    sermentCadre:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 10,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    sermentCadre:SetBackdropColor(0.06, 0.04, 0.02, 0.97)
+    sermentCadre:SetBackdropBorderColor(0.78, 0.62, 0.25, 1)
+end)
+local sermentTitre = sermentCadre:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+sermentTitre:SetPoint("TOP", sermentCadre, "TOP", 0, -18)
+sermentTitre:SetText(L("|cffffd100LE SERMENT DU CHASSEUR|r"))
+local sermentSous = sermentCadre:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+sermentSous:SetPoint("TOP", sermentCadre, "TOP", 0, -44)
+sermentSous:SetText(L("|cffa58b54Chaque prise validée demande un choix : comment comptent vos trophées ?|r"))
+sermentSous:SetShadowColor(0, 0, 0, 1)
+sermentSous:SetShadowOffset(1, -1)
+-- Les deux voies : participation (souple) ou coup de grâce (strict).
+-- Chaque plaque : icône + nom + flaveur (citation) + implications.
+local MHH_SERMENTS = {
+    {
+        souple = true,
+        icone = "Interface\\Icons\\INV_Weapon_Bow_01",
+        nom = L("|cffff8844La voie du compagnon|r — chasse souple"),
+        flaveur = L("« Le gibier est tombé sous les crocs de la meute — et la meute, c'était vous. »"),
+        implique = L("|cffc9a24aImplique :|r participer au combat suffit (dégâts ou soins apportés), même sans porter le coup fatal. Idéal en groupe."),
+    },
+    {
+        souple = false,
+        icone = "Interface\\Icons\\Ability_Hunter_Pet_Wolf",
+        nom = L("|cff66ccffLa voie du loup solitaire|r — chasse stricte"),
+        flaveur = L("« La traque se termine par VOTRE lame, ou elle ne compte pas. »"),
+        implique = L("|cffc9a24aImplique :|r seul votre coup de grâce valide la prise. En groupe, la bête doit mourir sous votre main. Pour chasseurs exigeants."),
+    },
+}
+local sermentPlaques = {}
+local sermentChoix = nil -- voie sélectionnée (avant validation)
+local MaJVoiesSerment = function() end -- forward : définie après le loop
+for i, s in ipairs(MHH_SERMENTS) do
+    local p = CreateFrame("Button", nil, sermentCadre, MHH_TEMPLATE_BACKDROP)
+    p:SetSize(216, 158)
+    p:SetPoint("TOPLEFT", sermentCadre, "TOPLEFT", 22 + (i - 1) * 224, -62)
+    p:SetNormalFontObject("GameFontHighlight")
+    pcall(function()
+        p:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = false, edgeSize = 8,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 },
+        })
+        p:SetBackdropColor(0.08, 0.05, 0.02, 0.95)
+    end)
+    local ic = p:CreateTexture(nil, "ARTWORK")
+    ic:SetSize(30, 30)
+    ic:SetPoint("TOPLEFT", p, "TOPLEFT", 10, -10)
+    ic:SetTexture(s.icone)
+    local nom = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    nom:SetPoint("TOPLEFT", p, "TOPLEFT", 48, -14)
+    nom:SetPoint("RIGHT", p, "RIGHT", -8, 0)
+    nom:SetJustifyH("LEFT")
+    nom:SetText(s.nom)
+    nom:SetShadowColor(0, 0, 0, 1)
+    nom:SetShadowOffset(1, -1)
+    local flv = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    flv:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -48)
+    flv:SetPoint("RIGHT", p, "RIGHT", -10, 0)
+    flv:SetJustifyH("LEFT")
+    flv:SetHeight(34)
+    flv:SetText(s.flaveur)
+    flv:SetTextColor(0.65, 0.55, 0.38)
+    flv:SetShadowColor(0, 0, 0, 1)
+    flv:SetShadowOffset(1, -1)
+    local imp = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    imp:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -88)
+    imp:SetPoint("RIGHT", p, "RIGHT", -10, 0)
+    imp:SetPoint("BOTTOM", p, "BOTTOM", 0, 10)
+    imp:SetJustifyH("LEFT")
+    imp:SetText(s.implique)
+    imp:SetTextColor(0.82, 0.74, 0.60)
+    imp:SetShadowColor(0, 0, 0, 1)
+    imp:SetShadowOffset(1, -1)
+    local badge = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    badge:SetPoint("BOTTOM", p, "BOTTOM", 0, -18)
+    badge:SetText(L("|cff88ff88• Votre voie actuelle|r"))
+    badge:SetShadowColor(0, 0, 0, 1)
+    badge:SetShadowOffset(1, -1)
+    -- v0.62 : cliquer une plaque ne valide PLUS direct — ça la
+    -- SÉLECTIONNE (liseré doré), et le bouton « Valider » en bas
+    -- confirme (retour de test : validation involontaire trop facile)
+    p:SetScript("OnClick", function()
+        sermentChoix = s.souple
+        if DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856) end
+        MaJVoiesSerment()
+    end)
+    sermentPlaques[i] = { p = p, badge = badge, souple = s.souple }
+end
+-- Rafraîchit les liserés : plaque sélectionnée = or vif, voie
+-- actuelle = or moyen, le reste = grisonné
+MaJVoiesSerment = function()
+    for _, pl in ipairs(sermentPlaques) do
+        local etat
+        if sermentChoix ~= nil and sermentChoix == pl.souple then
+            etat = "choix"
+        elseif sermentChoix == nil and DB and DB.config.killSouple == pl.souple then
+            -- Or moyen UNIQUEMENT hors sélection : dès qu'on choisit,
+            -- la non-sélection passe sombre (retour de test : le liseré
+            -- « voie actuelle » restait trop clair à côté du choix)
+            etat = "actuel"
+        else
+            etat = "off"
+        end
+        pcall(function()
+            if etat == "choix" then
+                pl.p:SetBackdropBorderColor(1, 0.84, 0.35, 1)
+            elseif etat == "actuel" then
+                pl.p:SetBackdropBorderColor(0.78, 0.62, 0.25, 1)
+            else
+                pl.p:SetBackdropBorderColor(0.16, 0.12, 0.06, 0.9)
+            end
+        end)
+        -- Badge : suit la SÉLECTION (prévisualisation du serment) ; tant
+        -- qu'on n'a rien cliqué, il marque la config en vigueur
+        pl.badge:SetShown(etat == "choix" or etat == "actuel")
+    end
+end
+local sermentNote = sermentCadre:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+sermentNote:SetPoint("BOTTOM", sermentCadre, "BOTTOM", 0, 42)
+sermentNote:SetText(L("|cffa58b54La voie se change à tout moment : |cffffd100/hunt kill loose/strict|r"))
+sermentNote:SetShadowColor(0, 0, 0, 1)
+sermentNote:SetShadowOffset(1, -1)
+-- BOUTON VALIDER : applique la voie sélectionnée (sélection → validation)
+local sermentValider = CreateFrame("Button", nil, sermentCadre, MHH_TEMPLATE_BACKDROP)
+sermentValider:SetSize(150, 26)
+sermentValider:SetPoint("BOTTOM", sermentCadre, "BOTTOM", -70, 12)
+sermentValider:SetText(L("Prononcer le serment !"))
+sermentValider:SetNormalFontObject("GameFontHighlight")
+pcall(function()
+    sermentValider:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = false, edgeSize = 8,
         insets = { left = 2, right = 2, top = 2, bottom = 2 },
     })
-    indiceGibier:SetBackdropColor(0.05, 0.03, 0.01, 0.85)
-    indiceGibier:SetBackdropBorderColor(0.98, 0.72, 0.30, 0.9)
+    sermentValider:SetBackdropColor(0.30, 0.22, 0.10, 0.85)
+    sermentValider:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
 end)
-local indiceGibierTxt = indiceGibier:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-indiceGibierTxt:SetPoint("CENTER")
-indiceGibierTxt:SetText(L("|cffffd100» Ton gibier t'attend ici|r"))
-indiceGibierTxt:SetShadowColor(0, 0, 0, 1)
-indiceGibierTxt:SetShadowOffset(1, -1)
-indiceGibier:Hide()
-local tickerIndice = nil
-function AfficherIndiceGibier()
-    if DB and DB.config.gibierVu then return end
-    if not indiceGibier or not onglets["monstres"] then return end
-    -- Suivre l'onglet : il bouge quand il est actif/désactivé
-    indiceGibier:ClearAllPoints()
-    indiceGibier:SetPoint("RIGHT", onglets["monstres"], "LEFT", 8, 0)
-    indiceGibier:Show()
-    if tickerIndice then tickerIndice:Cancel() end
-    tickerIndice = C_Timer.NewTicker(0.4, function()
-        -- Pulsation douce : respiration entre 0.45 et 1
-        local a = 0.72 + 0.28 * math.sin((GetTime() or 0) * math.pi)
-        indiceGibier:SetAlpha(a)
-    end)
-end
-function CacherIndiceGibier(id)
-    -- Seul le clic sur l'onglet Gibier valide l'intro guidée
-    if id and id ~= "monstres" then return end
-    if id == "monstres" and DB then DB.config.gibierVu = true end
-    if tickerIndice then tickerIndice:Cancel() tickerIndice = nil end
-    if indiceGibier then
-        indiceGibier:SetAlpha(1)
-        indiceGibier:Hide()
+sermentValider:SetScript("OnClick", function()
+    if sermentChoix == nil then
+        -- Aucune voie sélectionnée : on le dit, pas de fermeture sauvage
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Choisissez d'abord une voie pour prononcer le serment."))
+        return
     end
+    DB.config.killSouple = sermentChoix
+    DB.sermentVu = true
+    MHH_sermentPan:Hide()
+    if DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_OPEN or 845) end
+    if sermentChoix then
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Serment prononcé : |cffff8844la voie du compagnon|r (chasse souple — la participation compte)."))
+    else
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Serment prononcé : |cff66ccffla voie du loup solitaire|r (chasse stricte — votre coup de grâce, et rien d'autre)."))
+    end
+end)
+local sermentFermer = CreateFrame("Button", nil, sermentCadre, MHH_TEMPLATE_BACKDROP)
+sermentFermer:SetSize(110, 24)
+sermentFermer:SetPoint("BOTTOM", sermentCadre, "BOTTOM", 80, 13)
+sermentFermer:SetText(L("Plus tard"))
+sermentFermer:SetNormalFontObject("GameFontHighlight")
+pcall(function()
+    sermentFermer:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    sermentFermer:SetBackdropColor(0.30, 0.22, 0.10, 0.85)
+    sermentFermer:SetBackdropBorderColor(0.62, 0.48, 0.22, 0.9)
+end)
+sermentFermer:SetScript("OnClick", function()
+    DB.sermentVu = true
+    MHH_sermentPan:Hide()
+end)
+MHH_MontrerSerment = function()
+    -- Sélection vidée ; badges et liserés gérés par MaJVoiesSerment
+    sermentChoix = nil
+    MaJVoiesSerment()
+    MHH_sermentPan:Show()
 end
+MHH_sermentPan:Hide()
+end -- fin du bloc serment (libère ses locales)
+
+-- INDICE PULSANT « Ton gibier t'attend ici » RETIRÉ : le tuto de
+-- bienvenue guide déjà le chasseur à la première ouverture — la
+-- flèche d'objectif devenait un doublon.
 
 -- Son à l'ouverture/fermeture du carnet (SFX du jeu, style journal)
 carnet:SetScript("OnShow", function()
     if DB and DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_OPEN or 845) end
     -- Tuto de bienvenue : panneau « Bonne chasse » à la première ouverture
-    -- (case « Ne plus afficher » ; /hunt tuto pour le faire revenir)
+    -- (case « Ne plus afficher » ; /hunt tuto pour le faire revenir),
+    -- puis le serment du chasseur (voies souple/stricte) s'il n'a
+    -- jamais été prononcé
     if DB and not DB.tutoPanVu and MHH_tutoPan then
         MontrerTuto()
-    elseif DB and not DB.config.gibierVu and AfficherIndiceGibier then
-        AfficherIndiceGibier()
+    elseif DB and not DB.sermentVu and MHH_sermentPan then
+        MHH_MontrerSerment()
     end
     AfficherOnglet("accueil")
 end)
 carnet:SetScript("OnHide", function()
     if DB and DB.config.son then JouerSon(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_CLOSE or 844) end
-    -- L'indice « gibier t'attend ici » ne doit pas survivre au carnet :
-    -- on l'efface sans marquer la visite (id nil = simple masquage)
-    if CacherIndiceGibier then CacherIndiceGibier(nil) end
     -- Les encarts volants suivent : la fermeture du carnet doit tout
     -- emporter (sinon l'enclos/histogramme restaient à l'écran).
     if ArreterMenagerieGlobal then ArreterMenagerieGlobal() end
@@ -7660,7 +9591,7 @@ bouton:SetScript("OnEnter", function(self)
     GameTooltip:SetText("|cffffd100MH Hunt|r")
     GameTooltip:AddLine(L("Clic gauche : Carnet de chasse"))
     GameTooltip:AddLine(L("Clic droit : Succès"))
-    GameTooltip:AddLine(nbChasses() .. L(" chasses réussies."))
+    GameTooltip:AddLine(nbChasses() .. (nbChasses() == 1 and L(" chasse réussie.") or L(" chasses réussies.")))
     GameTooltip:Show()
 end)
 bouton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -7721,7 +9652,9 @@ end
 -- Chrono de chasse : bandeau discret en haut de l'écran pendant la traque,
 -- avec le record personnel du monstre chassé (demain : texture « En chasse ! »)
 MHH_chronoChasse = CreateFrame("Frame", nil, UIParent)
-MHH_chronoChasse:SetSize(360, 124) -- ratio proche de chrono.tga (1037x348 ≈ 3:1)
+-- 282x124 : chrono.tga rognée de 12 % de chaque côté (les ornements
+-- latéraux mangeaient la moitié de l'encart) — ratio du cœur conservé
+MHH_chronoChasse:SetSize(282, 124)
 MHH_chronoChasse:SetPoint("TOP", UIParent, "TOP", 0, -32)
 MHH_chronoChasse:SetFrameStrata("HIGH")
 pcall(function()
@@ -7739,13 +9672,13 @@ end)
 -- dans la zone PARCHemin de chrono.tga (cœur de l'image), loin des bords.
 MHH_chronoChasseTitre = MHH_chronoChasse:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 MHH_chronoChasseTitre:SetPoint("TOP", 0, -34)
-MHH_chronoChasseTitre:SetWidth(336)
+MHH_chronoChasseTitre:SetWidth(258)
 MHH_chronoChasseTitre:SetShadowColor(0, 0, 0, 1)
 MHH_chronoChasseTitre:SetShadowOffset(1, -1)
 pcall(function() MHH_chronoChasseTitre:SetFont("Fonts\\FRIZQT__.TTF", 18, "OUTLINE") end)
 MHH_chronoChasseTxt = MHH_chronoChasse:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 MHH_chronoChasseTxt:SetPoint("TOP", 0, -66)
-MHH_chronoChasseTxt:SetWidth(336)
+MHH_chronoChasseTxt:SetWidth(258)
 MHH_chronoChasseTxt:SetShadowColor(0, 0, 0, 1)
 MHH_chronoChasseTxt:SetShadowOffset(1, -1)
 pcall(function() MHH_chronoChasseTxt:SetFont("Fonts\\FRIZQT__.TTF", 15) end)
@@ -7820,7 +9753,7 @@ MHH_indicateurChasseFond:Hide()
 local function AjusterLargeurIndicateur()
     if not (DB and DB.contrat) then return end
     -- Colle au texte : ni trop large, ni écrasé pour un long nom de mob
-    indicateurChasse:SetWidth(math.min(300, math.max(110, 46 + #DB.contrat * 6.5)))
+    indicateurChasse:SetWidth(math.min(290, math.max(88, 38 + #DB.contrat * 6.5)))
 end
 -- Rappel du contrat sous le bouton minimap — visible AUSSI pendant la
 -- chasse (il est discret et ne gêne pas, contrairement à un bandeau)
@@ -7831,9 +9764,16 @@ local function RafraichirRappelContrat()
     indicateurChasse:SetPoint("TOP", bouton, "BOTTOM", 0, 2)
     indicateurChasse:SetHeight(20)
     if DB and DB.contrat then
-        -- Contrat sur 2 lignes : libellé centré, cible en dessous
-        indicateurChasseTxt:SetText("|cffff69b4CONTRAT :|r\n|cffffff00" .. DB.contrat .. "|r")
-        indicateurChasse:SetHeight(36)
+        -- Contrat sur 2 lignes : libellé centré, cible en dessous.
+        -- Bordure DORÉE (l'orange est réservé à « EN CHASSE ») : on lit
+        -- d'un coup d'œil qu'une mission est acceptée, et la prime au
+        -- passage. MHH_NomAffiche : graphie FR si le nom EN sert de clé.
+        pcall(function()
+            indicateurChasse:SetBackdropBorderColor(0.82, 0.64, 0.28, 0.95)
+        end)
+        indicateurChasseTxt:SetText("|cffffd100" .. L("Mission acceptée :") .. "|r\n|cffffff00"
+            .. (MHH_NomAffiche and MHH_NomAffiche(DB.contrat) or DB.contrat) .. "|r")
+        indicateurChasse:SetHeight(30)
         AjusterLargeurIndicateur()
         indicateurChasse:Show()
     else
@@ -7919,6 +9859,9 @@ end
 -- Activées par /hunt texui custom (test : /hunt test zone|banniere|chrono)
 MHH_chronoChasseFond = MHH_chronoChasse:CreateTexture(nil, "ARTWORK")
 MHH_chronoChasseFond:SetAllPoints()
+-- Rogne les ornements gauche/droite de chrono.tga : on ne garde que
+-- le cœur parchemin (12 % retiré de chaque côté)
+MHH_chronoChasseFond:SetTexCoord(0.12, 0.88, 0, 1)
 MHH_chronoChasseFond:Hide()
 AppliquerTexUI = function()
     if not DB then return end
@@ -7982,14 +9925,12 @@ SlashCmdList["LACHASSE"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt banner on/off|r, |cffffd100/hunt sound on/off|r : bannières, sons."))
         DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt kill loose/strict|r : participation ou coup de grâce pour valider une prise."))
         DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt icon custom/wow|r, |cffffd100/hunt parchment custom/wow|r : icône minimap, fond du carnet."))
-        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt texui custom/wow|r : textures bandeau/zone/chrono."))
+        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt texui custom/wow|r : textures bandeau/zone/chrono. |cffffd100/hunt toast custom/wow|r : toast parchemin / plaque sombre."))
         DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt chrono full/minimap/off|r : chrono de chasse. |cffffd100/hunt musique off/wow/custom|r : musiques."))
-        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt titre <famille>|r : naturaliste, chasseur, explorateur, traqueur."))
-        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt test zone|banniere|chrono|en chasse|prime|menagerie|r : prévisualisations. |cffffd100/hunt test chemin <mp3>|r, |cffffd100/hunt test son <id>|r : essais audio."))
-        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt tuto|r : revoir le panneau de bienvenue. |cffffd100/hunt lisere <1-5|0>|r : couleur du liseré de rang."))
+        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt tuto|r : revoir le panneau de bienvenue."))
         DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt carte <joueur>|r : envoyer votre carte de chasseur (rang, points, enclos) à un autre chasseur de l'addon."))
         DEFAULT_CHAT_FRAME:AddMessage("  |cffc9a24a•|r |cffffd100/hunt langue fr|en|r : langue de l'interface (publication).")
-        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt debug|r : diagnostic. |cffffd100/hunt armes|r : diagnostic des armes de chasse. |cffffd100/hunt export|r : liste « nom | id | zone » des découvertes (réconciliation Forever). |cffffd100/hunt reset succes|missions|menagerie|carnet|r : remises à zéro ciblées. |cffffd100/hunt reset|r : tout effacer (irréversible)."))
+        DEFAULT_CHAT_FRAME:AddMessage(L("  |cffc9a24a•|r |cffffd100/hunt export|r : liste « nom | id | zone » des découvertes (réconciliation Forever). |cffc9a24a•|r |cffffd100/hunt reset succes|missions|menagerie|carnet|r : remises à zéro ciblées. |cffffd100/hunt reset|r : tout effacer (irréversible)."))
     elseif cmd == "tuto" then
         -- Ré-affiche le panneau « Bonne chasse » (sans marquer tutoPanVu) ;
         -- le carnet s'ouvre d'abord : le panneau en est l'invite
@@ -8001,189 +9942,62 @@ SlashCmdList["LACHASSE"] = function(msg)
         OuvrirCarnet("profil")
     elseif cmd == "add" then
         if UnitExists("target") then
-            local nom = UnitName("target") or ""
+            -- v0.30 : nom secret (poison client) → clé de table interdite
+            local nom = NomOrdinaire(UnitName("target"))
+            if not nom then
+                DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Nom de la cible illisible sur ce client (secret) — visez-la autrement ou resaisissez-la."))
+            else
             local idR = nil
             local guid = UnitGUID("target")
             if guid then idR = tonumber(guid:match("-(%d+)$")) end
             DB.decouverts[nom] = DB.decouverts[nom] or { kills = 0, vu = true, zone = GetZoneText(), decouvert = time(), id = idR, nouveau = true }
             DB.decouverts[nom].vu = true
             DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. nom .. L(" ajouté au carnet."))
+            end
         else
             DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Ciblez d'abord une créature."))
         end
     elseif cmd == "remove" then
         if UnitExists("target") then
-            local nom = UnitName("target") or ""
+            local nom = NomOrdinaire(UnitName("target"))
+            if not nom then
+                DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Nom de la cible illisible sur ce client (secret)."))
+            else
             DB.decouverts[nom] = nil
             DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. nom .. L(" retiré du carnet."))
+            end
         end
     elseif cmd == "banner on" then DB.config.banniere = true DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Bannière activée."))
     elseif cmd == "banner off" then DB.config.banniere = false DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Bannière désactivée."))
     elseif cmd == "sound on" then DB.config.son = true DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Sons activés."))
     elseif cmd == "sound off" then DB.config.son = false DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Sons désactivés."))
-    elseif cmd == "armes" then
-        -- Diagnostic de l'histogramme des armes : ce que le client renvoie
-        -- VRAIMENT pour l'arme en main droite, et ce que la DB contient.
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Diagnostic des armes de chasse :")
-        local idArmeD = GetInventoryItemID and GetInventoryItemID("player", 16)
-        local lienArmeD = GetInventoryItemLink and GetInventoryItemLink("player", 16)
-        DEFAULT_CHAT_FRAME:AddMessage("  Arme main droite : id=" .. tostring(idArmeD) .. " lien=" .. tostring(lienArmeD))
-        if lienArmeD then
-            local _, nomD, _, _, _, _, _, typeD, sousD = pcall(GetItemInfo, lienArmeD)
-            DEFAULT_CHAT_FRAME:AddMessage("  GetItemInfo(lien) : nom=" .. tostring(nomD) .. " classe=" .. tostring(typeD) .. " sous-classe=" .. tostring(sousD))
-        end
-        if idArmeD then
-            local _, nomD2, _, _, _, _, _, typeD2, sousD2 = pcall(GetItemInfo, idArmeD)
-            DEFAULT_CHAT_FRAME:AddMessage("  GetItemInfo(id) : nom=" .. tostring(nomD2) .. " classe=" .. tostring(typeD2) .. " sous-classe=" .. tostring(sousD2))
-        end
-        if DB.armes then
-            for a, nArme in pairs(DB.armes) do
-                DEFAULT_CHAT_FRAME:AddMessage("  DB.armes : " .. tostring(a) .. " = " .. tostring(nArme))
-            end
-        else
-            DEFAULT_CHAT_FRAME:AddMessage("  DB.armes : vide")
-        end
-        DEFAULT_CHAT_FRAME:AddMessage("  → Histogramme : bouton d'icône de classe, page Profil.")
+    elseif cmd == "emote on" then DB.config.emotePerdu = true DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Émote de perte (à genou) activée."))
+    elseif cmd == "emote off" then DB.config.emotePerdu = false DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Émote de perte (à genou) désactivée."))
     elseif cmd == "kill loose" then DB.config.killSouple = true DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Kill souple (la participation compte).")
     elseif cmd == "kill strict" then DB.config.killSouple = false DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Kill strict (le coup de grâce doit être le vôtre)."))
     elseif cmd == "icon custom" then DB.config.icone = "custom" DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Icône custom — nécessite /reload."))
     elseif cmd == "icon wow" then DB.config.icone = "wow" DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Icône WoW — nécessite /reload."))
     elseif cmd == "parchment custom" then DB.config.fond = "custom" DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Parchemin custom — nécessite /reload."))
     elseif cmd == "parchment wow" then DB.config.fond = "wow" DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Fond WoW — nécessite /reload."))
-    elseif cmd == "titre" or cmd:match("^titre ") then
-        local famille = cmd:match("^titre (%S+)$")
-        if famille and TITRES[famille] then
-            DB.titreFamille = famille
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Titre affiché : « ") .. TitreDeFamille(famille) .. " » (" .. famille .. ")")
-        else
-            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Titre actuel : « " .. TitreDeFamille(DB.titreFamille or "naturaliste") .. " » — famille : " .. (DB.titreFamille or "naturaliste"))
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r /hunt titre naturaliste | chasseur | explorateur | traqueur"))
-        end
-        RaffraichirProfil()
     elseif cmd == "texui custom" then
         DB.config.texUI = "custom"
         if AppliquerTexUI then AppliquerTexUI() end
         DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Textures UI custom : bandeau.tga / zone.tga / chrono.tga (dossier Textures).")
+    elseif cmd == "toast custom" then
+        DB.config.toast = "custom"
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Toasts parchemin : toast1.tga (validations) + toast2.tga (annonces) + tampons de guilde (dossier Textures).")
+    elseif cmd == "toast wow" then
+        DB.config.toast = "wow"
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Toasts standard (plaque sombre).")
     elseif cmd == "texui wow" then
         DB.config.texUI = "wow"
         if AppliquerTexUI then AppliquerTexUI() end
         DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Textures UI standard (WoW).")
-    elseif cmd == "test zone" then
-        MHH_AnnonceZone(true)
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : annonce de zone affichée."))
-    elseif cmd == "test banniere" then
-        AfficherBanniere(L("CHASSE RÉUSSIE — MISSION ACCOMPLIE"), 0.4, 1, 0.4)
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : bannière centrale affichée."))
-    elseif cmd == "test chrono" then
-        -- Chrono animé : compte réellement 10 s pour voir le rendu final.
-        -- NB : `local tick` d'abord, tick:Cancel() dans la closure sinon
-        -- tick est global (nil) — bug corrigé.
-        local debut = time()
-        MHH_chronoChasseTitre:SetText("|cffffd100Humar le Seigneur hautain|r")
-        MHH_chronoChasseTxt:SetText("|cffff7a1a0:00|r  |cff8a6d3b(record : 0:58)|r")
-        local tick
-        FonduDoux(MHH_chronoChasse, 0, 1, 0.6, function()
-            tick = C_Timer.NewTicker(1, function()
-                local d = time() - debut
-                MHH_chronoChasseTxt:SetText("|cffff7a1a"
-                    .. FormatDuree(d) .. "|r  |cff8a6d3b(record : 0:58)|r")
-                if d >= 10 then
-                    tick:Cancel()
-                    if not chasseActive then
-                        FonduDoux(MHH_chronoChasse, 1, 0, 0.6, function()
-                            MHH_chronoChasse:Hide()
-                            MHH_chronoChasse:SetAlpha(1)
-                        end)
-                    end
-                end
-            end)
-        end)
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : chrono lancé (10 s), fondu à l'entrée et à la sortie."))
-    elseif cmd == "test en chasse" then
-        -- Prévi du comportement réel : bandeau « EN CHASSE » éphémère
-        -- (4 s) puis seulement le mini chrono en coin, rien d'autre.
-        if not chasseActive then
-            chasseActive = "Aperçu (test)"
-            chasseDebutTemps = time()
-            MettreAJourIndicateur()
-            BandeauChasseEphemer()
-            C_Timer.After(6, function()
-                if chasseActive == "Aperçu (test)" then
-                    chasseActive = nil
-                    MettreAJourIndicateur()
-                end
-            end)
-        else
-            BandeauChasseEphemer()
-        end
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : bandeau En chasse éphémère (4 s), puis mini chrono en coin."))
-    elseif cmd == "test prime" then
-        DB.contratJour = nil
-        ContratQuotidien()
-        if RaffraichirAccueil then RaffraichirAccueil() end
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : cible du jour relancée (toast + plaque Accueil)."))
-    elseif cmd:match("^carte %S+$") then
-        -- Carte de chasseur : données publiques uniquement (rang, points,
-        -- chasses, enclos, dernière prise) — JAMAIS le carnet de découverte
-        local destinataire = cmd:match("^carte (%S+)$")
-        local captures = 0
-        if DB.menagerie then for _ in pairs(DB.menagerie) do captures = captures + 1 end end
-        local carte = "CARTE:" .. (select(2, RangGuilde(DB.points or 0)) or "?")
-            .. "|" .. (DB.points or 0)
-            .. "|" .. nbChasses()
-            .. "|" .. captures
-            .. "|" .. (DB.dernierePriseNom or "-")
-        local ok = pcall(function()
-            if C_Chat and C_Chat.SendAddonMessage then
-                C_Chat.SendAddonMessage("MHHUNT", carte, "WHISPER", destinataire)
-            else
-                SendAddonMessage("MHHUNT", carte, "WHISPER", destinataire)
-            end
-        end)
-        if ok then
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Carte de chasseur envoyée à |cffffff00")
-                .. destinataire .. "|r (visible s'il a l'addon).")
-        else
-            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Envoi impossible — joueur introuvable ?")
-        end
-    elseif cmd == "test menagerie" then
-        -- Remplissage de test : ingrédients + les 8 spécimens en enclos
-        -- (dont un affamé qui boude et un gâté qui saute), pour tester
-        -- la page Ménagerie sans chasse préalable
-        DB.viande = (DB.viande or 0) + 20
-        DB.miel = (DB.miel or 0) + 10
-        DB.menagerie = DB.menagerie or {}
-        for _, nom in ipairs(MHH_SPECIMENS_ORDRE) do
-            -- Fiche au carnet SANS kill : les tests ne doivent jamais
-            -- gonfler le compteur de prises ni colorer la bête en
-            -- « déjà chassée ». kills reste à 0.
-            DB.chasses[nom] = DB.chasses[nom] or { kills = 0, vu = true }
-            DB.chasses[nom].vu = true
-            DB.menagerie[nom] = { capture = time(), nourri = time() }
-        end
-        -- états variés : l'un boude (affamé depuis 4 jours), un autre gâté
-        DB.menagerie["Mor'Ladim"].nourri = time() - 4 * 86400
-        DB.menagerie["Naraxis"].gate = time()
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : +20 viandes, +10 miels, 8 spécimens en enclos (dont un affamé et un gâté)."))
-        OuvrirCarnet("menagerie")
-    elseif cmd == "test menagerie off" then
-        DB.menagerie = nil
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : enclos vidé (l'apprivoisement reste testable, les fiches sont conservées)."))
-        if RaffraichirMenagerie then RaffraichirMenagerie() end
     elseif cmd == "musique off" or cmd == "musique wow" or cmd == "musique custom" then
         DB.config.musique = cmd:sub(9)
         MHH_ArreterMusique()
         DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Musiques : |cffffff00" .. DB.config.musique
             .. "|r." .. (DB.config.musique == "custom" and L(" (MHAmbiance/Sounds : promotion.mp3, combat.mp3, traque.mp3 — fichiers ajoutés après lancement du jeu = redémarrage client requis.)") or ""))
-    elseif cmd:match("^test chemin .+") then
-        local piste = cmd:match("^test chemin (.+)$")
-        PlaySoundFile(piste)
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Test : |cffffff00" .. piste .. "|r — si aucun son, le fichier n'existe pas dans vos MPQ.")
-    elseif cmd:match("^test son %d+$") then
-        -- Son par identifiant (ex. 552503 = Illidan « Vous n'êtes pas prêt »)
-        local id = tonumber(cmd:match("^test son (%d+)$"))
-        PlaySoundFile(id)
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Test : son |cffffff00" .. id .. L("|r joué — aucun son = identifiant inconnu sur ce client."))
     elseif cmd == "chrono full" or cmd == "chrono minimap" or cmd == "chrono off" then
         DB.config.chronoMode = cmd:sub(8)
         MHH_chronoMini:Hide()
@@ -8192,37 +10006,6 @@ SlashCmdList["LACHASSE"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Chrono : |cffffff00" .. DB.config.chronoMode
             .. "|r — " .. (DB.config.chronoMode == "full" and L("grand encart pendant la chasse")
             or (DB.config.chronoMode == "minimap" and "miniature sous le bouton minimap" or L("désactivé"))) .. ".")
-    elseif cmd:match("^lisere %d+$") then
-        -- Test du liseré de rang : /hunt lisere <1-5> ; 0 = rang réel
-        -- NB : la prochaine ouverture du carnet recolore selon le vrai rang.
-        local n = tonumber(cmd:match("^lisere (%d+)$"))
-        local idx
-        if n == 0 then
-            idx = RangGuilde(DB.points or 0)
-        elseif MHH_RANGS[n] and MHH_COULEURS_RANG[n] then
-            idx = n
-        else
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Usage : /hunt lisere <1-5> (0 = rang réel)."))
-            idx = nil
-        end
-        if idx then
-            local cr = MHH_COULEURS_RANG[idx] or MHH_COULEURS_RANG[1]
-            if carnetLisere then
-                for i = 1, 4 do carnetLisere[i]:SetColorTexture(cr[1], cr[2], cr[3], 0.95) end
-            end
-            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Liseré : |cffffff00") .. MHH_RANGS[idx].nom
-                .. "|r (" .. idx .. L("/5) — /hunt lisere 0 pour revenir au rang réel."))
-        end
-    elseif cmd == "debug" then
-        -- Diagnostic : bascule le traçage des canaux de détection + état
-        DB.config.debug = not DB.config.debug
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Debug : chasseActive=") .. (chasseActive or "nil") .. L(", contrat=") .. (DB.contrat or "nil") .. L(", points=") .. (DB.points or 0))
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Traçage des détections de mort : |cffffff00") .. (DB.config.debug and L("ACTIVÉ") or L("désactivé")) .. "|r (journal, fin de combat, viseur, chrono).")
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Musique : mode=|cffffff00") .. tostring(DB.config.musique) .. "|r, état=" .. tostring(musiqueEtat)
-            .. L(", son ambiant coupé=") .. tostring(sonAmbiantCoupe)
-            .. L(", C_Sound.PlaySoundFile=") .. tostring(C_Sound ~= nil and C_Sound.PlaySoundFile ~= nil))
-        indicateurChasse:Show()
-        C_Timer.After(5, function() MettreAJourIndicateur() end)
     elseif cmd:match("^ajuster .+ [+-]%d+$") then
         -- Recalibrage manuel du compteur d'une bête :
         --   /hunt ajuster Capitaine Croc-Plat -3   (retirer des prises fantômes)
@@ -8263,6 +10046,8 @@ SlashCmdList["LACHASSE"] = function(msg)
         -- et toutes les missions accomplies redeviennent à faire.
         DB.missions = {}
         DB.missionActive = nil
+        DB.missionCacheeActive = nil -- rumeur active abandonnée…
+        DB.missionCacheeJour = nil   -- …et le tirage du jour refait au log
         DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Missions remises à zéro — mission active abandonnée, toutes les missions redeviennent disponibles."))
         if RaffraichirCarnet and carnet and carnet:IsShown() then RaffraichirCarnet() end
     elseif cmd == "reset menagerie" then
@@ -8278,6 +10063,51 @@ SlashCmdList["LACHASSE"] = function(msg)
         DB.chasses = {}
         DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Carnet vidé — fiches et comptes de chasse effacés (succès, trophées et points de guilde conservés)."))
         if RaffraichirCarnet and carnet and carnet:IsShown() then RaffraichirCarnet() end
+    elseif cmd == "debug" then
+        -- Bascule du journal de diagnostic (canal DBG dans le chat) :
+        -- trace chaque canal de détection de mort, la source du gabarit,
+        -- etc. Utile quand une prise « ne compte pas ».
+        DB.config.debug = not DB.config.debug
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Traçage des détections de mort : |cffffff00") .. (DB.config.debug and "ON" or "OFF") .. "|r")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Debug : chasseActive=") .. tostring(chasseActive)
+            .. ", chasseSuspendue=" .. tostring(chasseSuspendue and chasseSuspendue.nom or nil)
+            .. ", rayonEngagement=" .. tostring(chasseRayon)
+            .. ", UnitBoundingRadius=" .. (UnitBoundingRadius and "dispo" or "absent"))
+    elseif cmd:sub(1, 6) == "carte " or cmd == "carte" then
+        -- v0.56 : ENVOI de la carte de chasseur. Le protocole existed côté
+        -- réception depuis longtemps, mais personne n'envoyait jamais rien.
+        local cible = cmd:sub(7):gsub("^%s+", ""):gsub("%s+$", "")
+        if cible == "" then
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r /hunt carte <joueur> : indiquez le nom du chasseur."))
+            return
+        end
+        local total = 0
+        if DB.chasses then
+            for _, c in pairs(DB.chasses) do total = total + (c.kills or 0) end
+        end
+        local nbCaptures = 0
+        if DB.menagerie then
+            for _ in pairs(DB.menagerie) do nbCaptures = nbCaptures + 1 end
+        end
+        local idxRang = RangGuilde(DB.points or 0)
+        local msgCarte = "CARTE:" .. idxRang .. "|" .. (DB.points or 0)
+            .. "|" .. total .. "|" .. nbCaptures .. "|" .. (DB.dernierePriseNom or "-")
+        local envoye = false
+        pcall(function()
+            if C_Chat and C_Chat.SendAddonMessage then
+                C_Chat.SendAddonMessage("MHHUNT", msgCarte, "WHISPER", cible)
+                envoye = true
+            elseif SendAddonMessage then
+                SendAddonMessage("MHHUNT", msgCarte, "WHISPER", cible)
+                envoye = true
+            end
+        end)
+        if envoye then
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Carte de chasseur envoyée à |cffffff00") .. cible
+                .. L("|r — elle s'affichera chez lui s'il a l'addon."))
+        else
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Canal d'addon indisponible sur ce client."))
+        end
     elseif cmd == "export" then
         -- Export de réconciliation : liste « nom FR | id | zone » des bêtes
         -- découvertes (id NPC extrait du GUID). À copier-coller au dev pour
@@ -8318,11 +10148,382 @@ SlashCmdList["LACHASSE"] = function(msg)
         DB.config.langue = "en"
         DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r " .. L("langue_changee"))
         if carnet and carnet:IsShown() then RaffraichirCarnet() end
+    elseif cmd == "test tooltip" or cmd:match("^test tooltip ") then
+        -- Previsualisation du tooltip de liste : nom seul, ANCHOR_CURSOR.
+        -- /hunt test tooltip <nom> force un mob precis (recherche large).
+        local nomSaisi = cmd:match("^test tooltip (.+)$")
+        local nom = nomSaisi
+        if nom and MHH_CATALOGUE[nom] == nil then nom = nil end
+        if nomSaisi and not nom then
+            for k in pairs(MHH_CATALOGUE) do
+                if k:lower():find(nomSaisi:lower(), 1, true) then nom = nom or k end
+            end
+        end
+        if not nom then
+            for k in pairs(MHH_CATALOGUE) do nom = nom or k end
+        end
+        if GameTooltip and nom then
+            GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+            local ech = UIParent:GetScale()
+            local mx, my = GetCursorPosition()
+            GameTooltip:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
+                mx / ech + 4, my / ech - 12)
+            GameTooltip:SetText("|cffffd100" .. (MHH_NomAffiche and MHH_NomAffiche(nom) or nom) .. "|r")
+            GameTooltip:Show()
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Tooltip affiche au curseur : |cffffff00"
+                .. nom .. "|r (se referme au prochain mouvement).")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Aucun mob a afficher.")
+        end
+    elseif cmd == "test mystere" then
+        -- Diagnostic vignette mystere : verifie que inconnu.tga est chargeable
+        -- (ok=true/false + chemin relu par GetTexture). Si ok=false : fichier
+        -- absent, JPG renomme en .tga, TGA non 32 bits non compresse, ou
+        -- dimensions non puissance de 2 (ex. 128).
+        for _, dossier in ipairs({ "Specimens", "Vignettes" }) do
+            local tx = UIParent:CreateTexture(nil, "ARTWORK")
+            tx:SetTexture("Interface\\AddOns\\MHHunt\\Textures\\" .. dossier .. "\\inconnu.tga")
+            local ok = tx:GetTexture() ~= nil
+            local chemin = tx:GetTexture() or "?"
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Test " .. dossier
+                .. "\\inconnu.tga : |cffffff00" .. tostring(ok) .. "|r — " .. tostring(chemin))
+            tx:Hide()
+            tx = nil
+        end
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r ok=false partout : fichier absent, JPG renomme en .tga, "
+            .. "TGA non 32 bits non compresse, ou taille non puissance de 2 (ex. 128).")
+    -- v0.151 : « test sprites » retiré — plus de sprites TGA ménagerie
+    -- (pensionnaires = modèles 3D du jeu, cf. Menagerie.lua).
+    elseif cmd == "test icones" then
+        -- Diagnostic icônes rondes du médaillon : charge chaque TGA, dit
+        -- ok/absent en chat, ET affiche un aperçu des 3 à l'écran (8 s).
+        -- ok=false : fichier absent, JPG renommé en .tga, TGA non 32 bits
+        -- non compressé, ou dimensions non puissance de 2 (ex. 128).
+        local nomsIcones = { "griffe", "patte", "sceau" }
+        -- Aperçu visuel : 3 cases de 128 px côte à côte, centre écran
+        local apercu = CreateFrame("Frame", nil, UIParent)
+        apercu:SetSize(3 * 148, 170)
+        apercu:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
+        apercu:SetFrameStrata("HIGH")
+        -- Pas de SetBackdrop (nil sur ce client pour un frame neuf) :
+        -- plaque en textures, même recette que les toasts (liseré + fond)
+        local bordApercu = apercu:CreateTexture(nil, "BACKGROUND")
+        bordApercu:SetAllPoints()
+        bordApercu:SetColorTexture(0.60, 0.44, 0.20, 0.95)
+        local fondApercu = apercu:CreateTexture(nil, "BORDER")
+        fondApercu:SetPoint("TOPLEFT", 3, -3)
+        fondApercu:SetPoint("BOTTOMRIGHT", -3, 3)
+        fondApercu:SetColorTexture(0.05, 0.03, 0.01, 0.92)
+        for i, n in ipairs(nomsIcones) do
+            local chemin = "Interface\\AddOns\\MHHunt\\Textures\\Circles\\" .. n .. ".tga"
+            -- Diagnostic chat (une texture jetable relit GetTexture)
+            local tx = UIParent:CreateTexture(nil, "ARTWORK")
+            tx:SetTexture(chemin)
+            local ok = tx:GetTexture() ~= nil
+            tx:Hide()
+            tx = nil
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Circles\\" .. n
+                .. ".tga : |cffffff00" .. tostring(ok) .. "|r — "
+                .. (ok and "|cff88ff88chargée|r" or "|cffff5555ABSENTE (fichier absent, JPG renommé en .tga, TGA non 32 bits non compressé, ou taille non puissance de 2)|r"))
+            -- Case d'aperçu : le TGA tel quel (aucun repli : on voit le VRAI rendu)
+            local t = apercu:CreateTexture(nil, "ARTWORK")
+            t:SetSize(128, 128)
+            t:SetPoint("TOPLEFT", (i - 1) * 148 + 10, -10)
+            t:SetTexture(chemin)
+            local lbl = apercu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            lbl:SetPoint("TOPLEFT", (i - 1) * 148 + 10, -140)
+            lbl:SetWidth(128)
+            lbl:SetJustifyH("CENTER")
+            lbl:SetText("|cffffd100" .. n .. "|r\n" .. (ok and "|cff88ff88OK|r" or "|cffff5555absente|r"))
+        end
+        C_Timer.After(8, function() apercu:Hide() end)
+    elseif cmd == "test griffe" then
+        -- Réplique du toast « Mesure du gabarit — COURONNE D'OR » (icône griffe)
+        ToastSucces("Interface\\Icons\\INV_Misc_MonsterClaw_04",
+            L("Mesure du gabarit"),
+            L("Gabarit mesuré : |cffffff00") .. "62" .. L(" unités|r")
+                .. L(" |cffa58b54(~") .. "145" .. L(" cm d'envergure)|r")
+                .. L(" — |cffffcc44COURONNE D'OR !|r"))
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast couronne d'or (griffe)."))
+    elseif cmd == "test patte" then
+        -- Réplique du toast « Spécimen capturé » (icône patte, desc 2 lignes)
+        ToastSucces("Interface\\Icons\\Ability_Hunter_BeastTaming",
+            L("Spécimen capturé"), "Humar (Les Paluns)" .. L(" rejoint l'enclos (Ménagerie)."))
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast spécimen capturé (patte)."))
+    elseif cmd == "test mission" then
+        -- Réplique du toast « Mission accomplie » (icône carrée : repli)
+        ToastSucces("Interface\\Icons\\Ability_Hunter_Pet_Wolf",
+            L("Mission accomplie"), "Nettoyer la tanière — Riveau (Bois de la Pénombre)")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast mission (icône carrée de repli)."))
+    elseif cmd == "test rumeur" then
+        -- Réplique du toast « Rumeur élucidée » (icône carrée : repli)
+        ToastSucces("Interface\\Icons\\INV_Misc_Dice_01",
+            L("Rumeur élucidée"), "Le dé pipé de Menara")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast rumeur élucidée (icône carrée de repli)."))
+    elseif cmd == "test succes" then
+        -- Réplique du toast « Succès débloqué » (icône carrée : repli)
+        ToastSucces("Interface\\Icons\\Spell_Fire_FireBolt",
+            L("Série de 5"), L("5 chasses consécutives sans mourir"), nil, "succes")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast succès (icône carrée de repli)."))
+    elseif cmd == "test promotion" then
+        -- Réplique du toast « Promotion de guilde » — affiché comme un
+        -- succès (parchemin custom, desc = phrase)
+        ToastSucces("Interface\\Common\\ReputationStar",
+            L("Promotion de guilde"), L("Nouveau rang : ") .. "Artisan du gibier", nil, "succes")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast promotion (comme un succès — parchemin)."))
+    elseif cmd == "test intrus" then
+        -- Réplique du toast « Intrus dans l'enclos » — message simple
+        -- (plaque sombre, sans médaillon ni tampon)
+        ToastSucces("Interface\\Icons\\Ability_Hunter_BeastTaming",
+            L("Intrus dans l'enclos"), "Gorged'acier", "wow")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast intrus dans l'enclos (message simple, sans médaillon)."))
+    elseif cmd == "debug enclos" then
+        -- DIAGNOSTIQUE « carrés flottants » (v0.65m) : inventorie tout ce
+        -- qui s'affiche sur l'enclos au moment de la commande. Taper
+        -- /hunt debug enclos quand un carré parasite est visible.
+        local n = 0
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r === Inventaire enclos ===")
+        -- fond + bâtiments
+        if MHH_enclosFondImg then
+            DEFAULT_CHAT_FRAME:AddMessage("fond: shown=" .. tostring(MHH_enclosFondImg:IsShown()))
+        end
+        for i, t in ipairs(MHH_batimentsRanch or {}) do
+            if t:IsShown() then
+                DEFAULT_CHAT_FRAME:AddMessage("batiment " .. (t.mhhFichier or i)
+                    .. ": shown, tga charge=" .. tostring(t.mhhCharge))
+            end
+        end
+        -- particules météo (doivent être toutes cachées depuis la v0.65h)
+        local np = 0
+        for _, p in ipairs(MHH_particulesMenagerie or {}) do
+            if p.t:IsShown() then np = np + 1 end
+        end
+        if np > 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff5050PARTICULES visibles: " .. np .. " (normalement 0)|r")
+        end
+        -- sprites pensionnaires + leurs ombres
+        for nom, s in pairs(MHH_spritesMenagerie or {}) do
+            local uf = s.f and s.f.utiliseTga
+            local sf = s.f and s.f:IsShown()
+            local so = s.ombre and s.ombre:IsShown()
+            local omx, omy = -999, -999
+            pcall(function()
+                local _, _, _, xoff, yoff = s.ombre:GetPoint(1)
+                omx, omy = xoff or -999, yoff or -999
+            end)
+            n = n + 1
+            DEFAULT_CHAT_FRAME:AddMessage("sprite " .. nom
+                .. ": tga=" .. tostring(uf) .. " shown=" .. tostring(sf)
+                .. " | ombre shown=" .. tostring(so)
+                .. " @" .. math.floor(tonumber(omx) or -999) .. "," .. math.floor(tonumber(omy) or -999)
+                .. " taille=" .. (s.ombre and (math.floor(s.ombre:GetWidth() or 0) .. "x" .. math.floor(s.ombre:GetHeight() or 0)) or "?"))
+        end
+        DEFAULT_CHAT_FRAME:AddMessage("sprites: " .. n .. " — si un carré est visible sans ligne correspondante, il vient d'ailleurs.")
+    elseif cmd:match("^test batimg") then
+        -- v0.118o : PRÉVISUALISATION des bâtiments supérieurs sans
+        -- monter de rang. Fichiers : tente, tour, house, manoir.
+        -- v0.142 : sans argument, AIDE au lieu d'effacer l'override —
+        -- « suit le rang » en réponse à /hunt test batimg tout court
+        -- se lisait comme « ça ne marche pas » (retour utilisateur).
+        -- Accepte aussi le NUMÉRO (1-4 = entrée de MHH_BATIMENTS_RANCH).
+        if not (MHH_DB and MHH_MajBatimentsRanch) then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r ouvre d'abord le carnet (M\195\169nagerie)")
+        else
+            local f = cmd:match("^test batimg (%S+)")
+            if not f then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r /hunt test batimg <tente|tour|house|manoir|1-4>  ou  /hunt test batimg off")
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r for\195\169age actif : "
+                    .. tostring(MHH_DB.config and MHH_DB.config.batImg))
+            elseif f == "off" then
+                MHH_DB.config = MHH_DB.config or {}
+                MHH_DB.config.batImg = nil
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r b\195\162timent : suit le rang")
+                MHH_MajBatimentsRanch()
+            else
+                local n = tonumber(f)
+                if n and MHH_BATIMENTS_RANCH and MHH_BATIMENTS_RANCH[n] then
+                    f = MHH_BATIMENTS_RANCH[n].fichier
+                end
+                local okBat
+                if MHH_BATIMENTS_RANCH then
+                    for _, bat in ipairs(MHH_BATIMENTS_RANCH) do
+                        if bat.fichier == f then okBat = true end
+                    end
+                end
+                if not okBat then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r b\195\162timent inconnu : " .. f .. " (tente, tour, house, manoir)")
+                else
+                    MHH_DB.config = MHH_DB.config or {}
+                    MHH_DB.config.batImg = f
+                    MHH_MajBatimentsRanch()
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r b\195\162timent forc\195\169 : " .. f .. "  (/hunt test batimg off pour revenir)")
+                end
+            end
+        end
+    elseif cmd == "test bat" or cmd:match("^test bat ") then
+        -- v0.115 : réglage à l'œil du bâtiment du ranch (la commande
+        -- était promise dans les commentaires depuis la v0.103 mais
+        -- n'avait JAMAIS été écrite — retour utilisateur).
+        --   /hunt test bat <taille> [x] [y]   (y depuis le HAUT)
+        --   /hunt test bat reset            (défauts : centre du plot)
+        if not (MHH_DB and MHH_MajBatimentsRanch) then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r ouvre d'abord le carnet (M\195\169nagerie)")
+        elseif cmd:match("^test bat reset") then
+            MHH_DB.config = MHH_DB.config or {}
+            MHH_DB.config.bat2 = nil
+            MHH_MajBatimentsRanch()
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r b\195\162timent : d\195\169fauts (centre du plot)")
+        else
+            local a, b, c = cmd:match("^test bat (%-?%d+)%s*(%-?%d*)%s*(%-?%d*)$")
+            if not a then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r /hunt test bat <taille> [x] [y]  |  /hunt test bat reset")
+            else
+                MHH_DB.config = MHH_DB.config or {}
+                MHH_DB.config.bat2 = {
+                    taille = tonumber(a),
+                    x = (b ~= "" and tonumber(b)) or nil,
+                    y = (c ~= "" and tonumber(c)) or nil,
+                }
+                MHH_MajBatimentsRanch()
+                local r = MHH_DB.config.bat2
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r b\195\162timent : taille " .. a
+                    .. ", x " .. tostring(r.x) .. ", y " .. tostring(r.y) .. " (depuis le haut)")
+            end
+        end
+    elseif cmd == "test zone" then
+        -- Aperçu : bandeau d'entrée de région (zone.tga en mode custom)
+        MHH_AnnonceZone(true)
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : annonce de zone affichée."))
+    elseif cmd == "test banniere" then
+        -- Aperçu : bannière centrale (bandeau.tga en mode custom)
+        AfficherBanniere(L("|cffffd100BONNE CHASSE !|r"), 1, 0.84, 0)
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : bannière centrale affichée."))
+    elseif cmd == "test en chasse" then
+        -- Aperçu : bandeau EN CHASSE + mini chrono en coin (4 s)
+        AfficherBanniere(L("|cffff7a1aEN CHASSE !|r"), 0.95, 0.55, 0.2)
+        if MHH_chronoMini then
+            MHH_chronoMini:Show()
+            if MHH_chronoMiniTxt then MHH_chronoMiniTxt:SetText("|cffff7a1a00:04|r") end
+            C_Timer.After(4, function() if MHH_chronoMini then MHH_chronoMini:Hide() end end)
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : bandeau En chasse éphémère (4 s), puis mini chrono en coin."))
+    elseif cmd == "test chrono" then
+        -- Aperçu : grand chrono de chasse, compte à rebours 10 s puis masqué
+        if MHH_chronoChasse and MHH_chronoChasseTitre and MHH_chronoChasseTxt then
+            MHH_chronoChasseTitre:SetText("|cffffd100Test chrono|r")
+            MHH_chronoChasse:Show()
+            for i = 0, 10 do
+                C_Timer.After(i, function()
+                    if MHH_chronoChasse and MHH_chronoChasse:IsShown() then
+                        MHH_chronoChasseTxt:SetText("|cffff7a1a00:" .. string.format("%02d", 10 - i) .. "|r")
+                        if i == 10 then MHH_chronoChasse:Hide() end
+                    end
+                end)
+            end
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : chrono lancé (10 s), fondu à l'entrée et à la sortie."))
+    elseif cmd == "test prime" then
+        -- Aperçu : toast validation (toast1.tga + médaillon + tampon)
+        ToastSucces("Interface\\Icons\\INV_Misc_Coin_01",
+            L("Contrat rempli"), "Rotheap (Les Paluns)")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast validation affiché (toast1.tga)."))
+    elseif cmd == "test wow" then
+        -- Aperçu : l'AUTRE toast (plaque sombre à liseré doré), sans
+        -- toucher à la config — surcharge ponctuelle du mode
+        MHH_ToastForceMode = "wow"
+        ToastSucces("Interface\\Icons\\INV_Misc_Coin_01",
+            L("Contrat rempli"), "Rotheap (Les Paluns)")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast sombre affiché (mode « wow », sans changer la config)."))
+    elseif cmd == "test tampon alliance" or cmd == "test tampon horde" then
+        -- Aperçu : le même toast avec le tampon de faction forcé
+        local f = (cmd == "test tampon horde") and "Horde" or "Alliance"
+        MHH_ToastTestFaction = f
+        ToastSucces("Interface\\Icons\\INV_Misc_Coin_01",
+            L("Contrat rempli"), "Rotheap (Les Paluns)")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : toast avec tampon ") .. f .. ".")
+    elseif cmd == "test cible" then
+        -- Aperçu : toast cible du jour (compact) — tirage forcé si besoin
+        if not DB.cibleJour then ContratQuotidien() end
+        if DB.cibleJour then
+            ToastCibleDuJour(DB.cibleJour, DB.cibleJourZone)
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Test : aucune cible du jour (catalogue vide ?).")
+            return
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : cible du jour relancée (toast + plaque Accueil)."))
+    elseif cmd == "test menagerie" then
+        -- Aperçu : provisionne viandes/miels et 8 spécimens d'enclos
+        DB.viande = (DB.viande or 0) + 20
+        DB.miel = (DB.miel or 0) + 10
+        DB.menagerie = DB.menagerie or {}
+        local n = 0
+        if MHH_SPECIMENS then
+            for nomSpec in pairs(MHH_SPECIMENS) do
+                if n >= 8 then break end
+                if not DB.menagerie[nomSpec] then
+                    DB.menagerie[nomSpec] = { capture = time(), nourri = time() }
+                    n = n + 1
+                end
+            end
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Test : +20 viandes, +10 miels, 8 spécimens en enclos (dont un affamé et un gâté)."))
+        if RaffraichirMenagerie then RaffraichirMenagerie() end
+        -- v0.119 : la fiche Gibier suit (mention « Spécimen en enclos »)
+        if RaffraichirCarnet and carnet and carnet:IsShown() then RaffraichirCarnet() end
+    elseif cmd:match("^test son .+$") then
+        -- /hunt test son <id SoundKit> : essai audio direct sur le canal
+        -- SFX (PlaySoundFile). Aucun son = identifiant inconnu du client.
+        local ref = cmd:match("^test son (.+)$")
+        local res = JouerFichierBlinde(tonumber(ref) or ref)
+        if res ~= nil and res ~= false then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Son joué : |cffffff00" .. ref .. "|r.")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Aucun son pour « " .. ref
+                .. " » : identifiant inconnu sur ce client (ou piste muette).")
+        end
+    elseif cmd:match("^test chemin .+$") then
+        -- /hunt test chemin <fichier.mp3> : essai d'un fichier du dossier
+        -- MHAmbiance\\Sounds (nom relatif). Fichier ajouté après le
+        -- lancement du jeu = redémarrage client requis.
+        local f = cmd:match("^test chemin (.+)$")
+        local res = JouerFichierBlinde("Interface\\AddOns\\MHAmbiance\\Sounds\\" .. f)
+        if res ~= nil and res ~= false then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Fichier joué : |cffffff00MHAmbiance\\Sounds\\" .. f .. "|r.")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Introuvable ou muet : |cffffff00MHAmbiance\\Sounds\\" .. f
+                .. "|r — vérifiez le nom/extension, ou redémarrez le client si le fichier a été ajouté après lancement.")
+        end
+    elseif cmd == "armes" then
+        -- DIAGNOSTIC armes de chasse (enfin implémenté — l'aide
+        -- l'annonçait). État du panneau + contenu de DB.armes.
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r Diagnostic armes :")
+        if not MHH_armesPan then
+            DEFAULT_CHAT_FRAME:AddMessage("  panneau : INEXISTANT — le chunk mhhunt.lua a été interrompu avant sa création (voir erreur de chargement).")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("  panneau : shown=" .. tostring(MHH_armesPan:IsShown())
+                .. " visible=" .. tostring(MHH_armesPan:IsVisible())
+                .. " strate=" .. tostring(MHH_armesPan:GetFrameStrata())
+                .. " niveau=" .. tostring(MHH_armesPan:GetFrameLevel()))
+        end
+        local nArmes = 0
+        if DB and DB.armes then
+            for k, v in pairs(DB.armes) do
+                nArmes = nArmes + 1
+                DEFAULT_CHAT_FRAME:AddMessage("  " .. k .. " : " .. v)
+            end
+        end
+        if nArmes == 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("  (aucune arme enregistrée en base — les prises n'ont pas été identifiées)")
+        end
     elseif cmd == "reset" then
         for k in pairs(LaChasseDB) do LaChasseDB[k] = nil end
         InitDB()
         DEFAULT_CHAT_FRAME:AddMessage(L("|cffffd100[MH Hunt]|r Base réinitialisée."))
     else
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r /hunt (carnet), /hunt aide, /hunt tuto, /hunt achievements, /hunt add|remove, /hunt banner on|off, /hunt sound on|off, /hunt kill loose|strict, /hunt icon custom|wow, /hunt parchment custom|wow, /hunt texui custom|wow, /hunt titre <famille>, /hunt test zone|banniere|chrono|en chasse|prime, /hunt test chemin <chemin mp3>, /hunt test son <id>, /hunt musique off|wow|custom, /hunt chrono full|minimap|off, /hunt carte <joueur>, /hunt lisere <1-5|0>, /hunt ajuster <nom> <±n>, /hunt reset kills, /hunt reset succes|missions|menagerie|carnet, /hunt export, /hunt langue fr|en, /hunt debug, /hunt armes, /hunt reset")
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[MH Hunt]|r /hunt (carnet), /hunt aide, /hunt tuto, /hunt achievements, /hunt add|remove, /hunt banner on|off, /hunt sound on|off, /hunt kill loose|strict, /hunt icon custom|wow, /hunt parchment custom|wow, /hunt texui custom|wow, /hunt toast custom|wow, /hunt musique off|wow|custom, /hunt test zone|banniere|chrono|en chasse|prime|wow|cible|tampon alliance|horde|icones|griffe|patte|mission|rumeur|succes|promotion|intrus|menagerie, /hunt chrono full|minimap|off, /hunt carte <joueur>, /hunt ajuster <nom> <±n>, /hunt reset kills, /hunt reset succes|missions|menagerie|carnet, /hunt export, /hunt langue fr|en, /hunt reset")
     end
 end
+-- ================= PONT VERS Menagerie.lua (v0.67) =================
+MHH_L = L
+MHH_Carnet = carnet
+MHH_MeteoActuelle = MeteoActuelle

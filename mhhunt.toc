@@ -1,0 +1,14 @@
+## Interface: 16001,120100
+## Title: MHHunt
+## Notes: Chasse à la Monster Hunter - carnet de chasse, mode En chasse, succès
+## Author: Jean-Convient
+## IconTexture: Interface\AddOns\MHHunt\Textures\carnet.tga
+## Category-frFR: La Chasse
+## Category-enUS: The Hunt
+## SavedVariablesPerCharacter: LaChasseDB
+## Version: 0.1
+
+MHHuntData.lua
+mhhunt.lua
+Specimens.lua
+Menagerie.lua
